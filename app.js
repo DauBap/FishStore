@@ -1476,6 +1476,13 @@ function bindEvents() {
   });
   $("#customer-form").addEventListener("submit", submitCustomer);
   $("#order-form").addEventListener("submit", createOrder);
+  $(".order-payment-qr-open").addEventListener("click", () => openDialog($("#qr-lightbox")));
+  $("#qr-lightbox").addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeDialog($("#qr-lightbox"));
+    }
+  });
   $("#order-customer-phone").addEventListener("input", () => {
     updateOrderCustomerMatch();
     updateOrderFishRewardSummary();

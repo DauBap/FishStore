@@ -310,7 +310,16 @@ td { height: 51px; padding: 7px 13px; border-top: 1px solid #edf0ed; color: #596
 .order-payment-qr { display: grid; justify-items: center; gap: 7px; margin: 2px 0 13px; padding: 12px; border: 1px solid #e5ebe6; border-radius: 8px; background: #fafcfb; text-align: center; }
 .order-payment-qr h3 { margin: 0; color: #455249; font-size: 10px; }
 .order-payment-qr img { display: block; width: min(190px,100%); height: auto; border-radius: 4px; }
+.order-payment-qr-open { display: block; padding: 0; border: 0; border-radius: 4px; background: transparent; cursor: zoom-in; }
+.order-payment-qr-open:focus-visible { outline: 3px solid #277b57; outline-offset: 4px; }
 .order-payment-qr p { margin: 0; color: var(--muted); font-size: 9px; }
+#qr-lightbox { box-sizing: border-box; display: none; width: 100vw; max-width: none; height: 100vh; max-height: none; margin: auto; padding: max(64px,calc(env(safe-area-inset-top) + 56px)) max(16px,env(safe-area-inset-right)) max(24px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left)); place-items: center; overflow: hidden; border: 0; border-radius: 0; color: #fff; background: rgba(13,20,16,.96); }
+#qr-lightbox[open] { display: grid; }
+#qr-lightbox::backdrop { background: rgba(10,16,12,.9); backdrop-filter: blur(4px); }
+#qr-lightbox > img { display: block; width: auto; max-width: 100%; height: auto; max-height: 100%; object-fit: contain; border-radius: 4px; box-shadow: 0 12px 48px rgba(0,0,0,.35); }
+.qr-lightbox-close { position: absolute; top: max(8px,env(safe-area-inset-top)); right: max(8px,env(safe-area-inset-right)); display: grid; width: 48px; height: 48px; padding: 12px; place-items: center; border: 1px solid rgba(255,255,255,.35); border-radius: 50%; color: #fff; background: rgba(255,255,255,.12); cursor: pointer; }
+.qr-lightbox-close svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-width: 2; }
+.qr-lightbox-close:focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
 .info-copy p { margin: 12px 0; color: #5f6d64; font-size: 11px; line-height: 1.65; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; clip-path: inset(50%); }
 .toast-region { position: fixed; z-index: 20; right: 20px; bottom: 18px; display: grid; gap: 8px; }

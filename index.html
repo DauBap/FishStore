@@ -132,12 +132,21 @@
         <label for="order-note">Ghi chú đơn hàng</label><textarea id="order-note" name="note" rows="2" maxlength="300" placeholder="Ghi chú giao hàng, yêu cầu của khách..."></textarea>
         <section class="order-payment-qr" aria-labelledby="order-payment-qr-title">
           <h3 id="order-payment-qr-title">Thanh toán bằng mã QR</h3>
-          <img src="assets/payment-qr.png" alt="Mã QR thanh toán VietQR của cửa hàng" width="768" height="837">
+          <button class="order-payment-qr-open" type="button" aria-label="Phóng to mã QR thanh toán" aria-haspopup="dialog">
+            <img src="assets/payment-qr.png" alt="" width="768" height="837">
+          </button>
           <p>Quét mã để thanh toán đơn hàng</p>
         </section>
         <div class="dialog-error" id="order-error" role="alert" hidden></div>
         <div class="dialog-actions"><button type="button" class="button button-secondary" data-close>Hủy</button><button type="submit" class="button button-primary">Tạo đơn hàng</button></div>
       </form>
+    </dialog>
+
+    <dialog class="app-dialog qr-lightbox" id="qr-lightbox" aria-label="Mã QR thanh toán phóng to">
+      <button class="qr-lightbox-close" type="button" aria-label="Đóng ảnh mã QR" data-close>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m18 6-12 12M6 6l12 12"/></svg>
+      </button>
+      <img src="assets/payment-qr.png" alt="Mã QR thanh toán VietQR của cửa hàng" width="768" height="837">
     </dialog>
 
     <dialog class="app-dialog" id="receipt-dialog" aria-labelledby="receipt-dialog-title">
