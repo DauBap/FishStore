@@ -310,7 +310,7 @@ td { height: 51px; padding: 7px 13px; border-top: 1px solid #edf0ed; color: #596
 .order-payment-qr { display: grid; justify-items: center; gap: 7px; margin: 2px 0 13px; padding: 12px; border: 1px solid #e5ebe6; border-radius: 8px; background: #fafcfb; text-align: center; }
 .order-payment-qr h3 { margin: 0; color: #455249; font-size: 10px; }
 .order-payment-qr img { display: block; width: min(190px,100%); height: auto; border-radius: 4px; }
-.order-payment-qr-open { display: block; padding: 0; border: 0; border-radius: 4px; background: transparent; cursor: zoom-in; }
+.order-payment-qr-open { display: block; width: min(190px,100%); justify-self: center; padding: 0; border: 0; border-radius: 4px; background: transparent; cursor: zoom-in; }
 .order-payment-qr-open:focus-visible { outline: 3px solid #277b57; outline-offset: 4px; }
 .order-payment-qr p { margin: 0; color: var(--muted); font-size: 9px; }
 #qr-lightbox { box-sizing: border-box; display: none; width: 100vw; max-width: none; height: 100vh; max-height: none; margin: auto; padding: max(64px,calc(env(safe-area-inset-top) + 56px)) max(16px,env(safe-area-inset-right)) max(24px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left)); place-items: center; overflow: hidden; border: 0; border-radius: 0; color: #fff; background: rgba(13,20,16,.96); }
@@ -438,4 +438,7 @@ td { height: 51px; padding: 7px 13px; border-top: 1px solid #edf0ed; color: #596
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}
+@media (max-width: 680px) {
+  .app-dialog input, .app-dialog select, .app-dialog textarea, .login-card input { font-size: 16px; }
 }
