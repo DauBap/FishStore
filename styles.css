@@ -413,6 +413,13 @@ td { height: 51px; padding: 7px 13px; border-top: 1px solid #edf0ed; color: #596
   .order-line { grid-template-columns: minmax(72px,1fr) 42px 28px 68px 57px 23px; gap: 3px; }
   .order-line.has-sizes { grid-template-columns: minmax(68px,1fr) minmax(58px,.9fr) 36px 26px minmax(58px,.9fr) 50px 23px; }
   .order-line select, .order-line input { padding-right: 3px; padding-left: 4px; font-size: 8px; }
+  .order-line:not(.has-sizes) { grid-template-columns: minmax(0,1fr) minmax(70px,.8fr) minmax(52px,.55fr); gap: 6px; }
+  .order-line:not(.has-sizes) .line-product { grid-area: 1 / 1 / 2 / 2; }
+  .order-line:not(.has-sizes) .line-quantity { grid-area: 1 / 2 / 2 / 3; }
+  .order-line:not(.has-sizes) .line-remove { grid-area: 1 / 3 / 2 / 4; }
+  .order-line:not(.has-sizes) .line-unit { grid-area: 2 / 1 / 3 / 2; }
+  .order-line:not(.has-sizes) .line-unit-price { grid-area: 2 / 2 / 3 / 3; }
+  .order-line:not(.has-sizes) .line-price { grid-area: 2 / 3 / 3 / 4; }
   .order-reward-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; clip-path: inset(50%); }
   .order-reward-table tbody tr { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 3px 8px; padding: 8px; border-top: 1px solid #e1ece2; }
   .order-reward-table td, .order-reward-table td:first-child { display: grid; gap: 2px; min-width: 0; padding: 2px 0; border: 0; text-align: left; white-space: normal; overflow-wrap: anywhere; }
@@ -440,5 +447,5 @@ td { height: 51px; padding: 7px 13px; border-top: 1px solid #edf0ed; color: #596
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
 @media (max-width: 680px) {
-  .app-dialog input, .app-dialog select, .app-dialog textarea, .login-card input { font-size: 16px; }
+  .app-shell input:focus, .app-shell select:focus, .app-shell textarea:focus, .login-screen input:focus, .login-screen select:focus, .login-screen textarea:focus { font-size: 16px; }
 }
