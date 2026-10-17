@@ -1,7 +1,7 @@
 const KEY = "kho-moc.store.v1";
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
-const emptyData = { products: [], customers: [], orders: [], receipts: [], fishRewards: [] };
+const emptyData = { products: [], customers: [], orders: [], receipts: [], expenses: [], fishRewards: [], units: [] };
 const localData = loadData();
 let data = structuredClone(emptyData);
 let cloudRevision = 0;
@@ -10,6 +10,8 @@ let pendingCloudWrites = 0;
 let appEventsBound = false;
 let cloudRefreshTimer = null;
 let cloudRefreshInProgress = false;
+let cloudStartupInProgress = false;
+let ownerSetupRequired = false;
 let activeView = "overview";
 let lineId = 0;
 let receiptLineId = 0;
@@ -31,17 +33,24 @@ function loadData() {
 }
 
 function normalizeData(stored) {
+  const products = Array.isArray(stored.products) ? stored.products.filter((product) => product && typeof product === "object").map((product) => {
+    const cleaned = { ...product };
+    delete cleaned.stock;
+    delete cleaned.lowStock;
+    return cleaned;
+  }) : [];
+  const units = [
+    ...(Array.isArray(stored.units) ? stored.units : []),
+    ...products.map((product) => product.unit),
+  ].filter((unit) => typeof unit === "string").map((unit) => unit.trim()).filter(Boolean);
   return {
-    products: Array.isArray(stored.products) ? stored.products.filter((product) => product && typeof product === "object").map((product) => {
-      const cleaned = { ...product };
-      delete cleaned.stock;
-      delete cleaned.lowStock;
-      return cleaned;
-    }) : [],
+    products,
     customers: Array.isArray(stored.customers) ? stored.customers : [],
     orders: Array.isArray(stored.orders) ? stored.orders : [],
     receipts: Array.isArray(stored.receipts) ? stored.receipts : [],
+    expenses: Array.isArray(stored.expenses) ? stored.expenses : [],
     fishRewards: Array.isArray(stored.fishRewards) ? stored.fishRewards : [],
+    units: [...new Map(units.map((unit) => [unit.toLocaleLowerCase(), unit])).values()],
   };
 }
 
@@ -66,10 +75,18 @@ async function storeProductImage(file, imageId = id()) {
   if (parts < 1 || parts > 3) throw new Error("Ảnh cần có dung lượng tối đa 8 MB.");
   try {
     for (let part = 0; part < parts; part += 1) {
+      const blob = file.slice(part * chunkBytes, Math.min((part + 1) * chunkBytes, file.size), file.type);
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(reader.error || new Error("Không thể đọc một phần hình ảnh."));
+        reader.readAsDataURL(blob);
+      });
+      if (typeof dataUrl !== "string" || !dataUrl.includes(",")) throw new Error("Không thể mã hóa một phần hình ảnh.");
       const response = await fetch(`/api/images/${encodeURIComponent(imageId)}?part=${part}&parts=${parts}`, {
         method: "PUT",
-        headers: { "Content-Type": file.type },
-        body: file.slice(part * chunkBytes, Math.min((part + 1) * chunkBytes, file.size), file.type),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contentType: file.type, data: dataUrl.slice(dataUrl.indexOf(",") + 1) }),
       });
       if (!response.ok) {
         const result = await response.json().catch(() => ({}));
@@ -186,6 +203,30 @@ async function persistSnapshot(snapshot) {
 function id() { return crypto.randomUUID(); }
 function money(value) { return new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND", maximumFractionDigits: 0 }).format(Number(value) || 0); }
 function number(value) { return new Intl.NumberFormat("vi-VN").format(Number(value) || 0); }
+function parsePrice(value) {
+  const digits = String(value ?? "").replace(/[,\s]/g, "");
+  return /^\d+$/.test(digits) ? Number(digits) : NaN;
+}
+function formatPriceInput(input) {
+  const start = input.selectionStart ?? input.value.length;
+  const digitsBeforeCursor = input.value.slice(0, start).replace(/\D/g, "").length;
+  const digits = input.value.replace(/\D/g, "");
+  input.value = digits.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  let cursor = 0;
+  let counted = 0;
+  while (cursor < input.value.length && counted < digitsBeforeCursor) {
+    if (/\d/.test(input.value[cursor])) counted += 1;
+    cursor += 1;
+  }
+  input.setSelectionRange(cursor, cursor);
+}
+function addPriceInput(input) {
+  input.type = "text";
+  input.inputMode = "numeric";
+  input.dataset.priceInput = "true";
+  input.addEventListener("input", () => formatPriceInput(input));
+  if (input.value) formatPriceInput(input);
+}
 function dateLabel(value, options = { day: "2-digit", month: "2-digit", year: "numeric" }) {
   return new Date(value).toLocaleDateString("vi-VN", options);
 }
@@ -216,20 +257,6 @@ function closeDialog(dialog) {
   }
 }
 
-function statusInfo(status) {
-  const values = {
-    new: ["Mới", "status-new"],
-    processing: ["Đang xử lý", "status-processing"],
-    shipped: ["Đang giao", "status-shipped"],
-    delivered: ["Đã giao", "status-delivered"],
-    cancelled: ["Đã hủy", "status-cancelled"],
-  };
-  return values[status] || values.new;
-}
-function statusBadge(status) {
-  const [label, cls] = statusInfo(status);
-  return `<span class="status-badge ${cls}"><span></span>${label}</span>`;
-}
 function customerFor(order) { return data.customers.find((customer) => customer.id === order.customerId); }
 function orderTotal(order) { return order.lines.reduce((total, line) => total + line.quantity * line.price, 0); }
 function lineCostInfo(line) {
@@ -332,16 +359,18 @@ function unitsSold(customerId) {
 }
 
 function renderCounts() {
-  $("#order-count").textContent = number(data.orders.filter((order) => !["delivered", "cancelled"].includes(order.status)).length);
+  $("#order-count").textContent = number(data.orders.length);
   $("#receiving-count").textContent = number(data.receipts.length);
+  $("#expense-count").textContent = number(data.expenses.length);
   $("#reward-count").textContent = number(pendingFishRewards().length);
+  $("#gifted-fish-count").textContent = number(data.fishRewards.filter((reward) => reward.status === "gifted").length);
 }
 
 function renderOverview() {
   clearRenderedImages();
   $("#metric-revenue").textContent = money(data.orders.filter((order) => order.status !== "cancelled").reduce((sum, order) => sum + orderTotal(order), 0));
   $("#metric-orders").textContent = number(data.orders.length);
-  $("#metric-pending").textContent = `${number(data.orders.filter((order) => !["delivered", "cancelled"].includes(order.status)).length)} đơn cần xử lý`;
+  $("#metric-pending").textContent = "Giao trực tiếp";
   $("#metric-products").textContent = number(data.products.length);
   $("#metric-customers").textContent = number(data.customers.length);
   const recent = $("#recent-orders");
@@ -351,9 +380,9 @@ function renderOverview() {
     recent.innerHTML = '<div class="empty-inline"><span class="empty-mark"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h2l2.2 11.2a2 2 0 0 0 2 1.6h7.7a2 2 0 0 0 1.9-1.4L22 9H7"/></svg></span><strong>Chưa có đơn hàng</strong><span>Tạo đơn đầu tiên để bắt đầu theo dõi bán hàng.</span><button class="button button-secondary" data-create-order>Tạo đơn hàng</button></div>';
     $("[data-create-order]", recent).addEventListener("click", openOrderDialog);
   } else {
-    recent.innerHTML = `<div class="table-wrap"><table><thead><tr><th>MÃ ĐƠN</th><th>KHÁCH HÀNG</th><th>NGÀY TẠO</th><th>TỔNG TIỀN</th><th>TRẠNG THÁI</th></tr></thead><tbody>${latest.map((order) => {
+    recent.innerHTML = `<div class="table-wrap"><table><thead><tr><th>MÃ ĐƠN</th><th>KHÁCH HÀNG</th><th>NGÀY TẠO</th><th>TỔNG TIỀN</th></tr></thead><tbody>${latest.map((order) => {
       const customer = customerFor(order);
-      return `<tr><td><button class="order-link" data-order="${order.id}">#${escapeText(order.number)}</button></td><td>${escapeText(customer?.name || "Khách đã xóa")}</td><td>${dateLabel(order.createdAt)}</td><td class="amount-cell">${money(orderTotal(order))}</td><td>${statusBadge(order.status)}</td></tr>`;
+      return `<tr><td><button class="order-link" data-order="${order.id}">#${escapeText(order.number)}</button></td><td>${escapeText(customer?.name || "Khách đã xóa")}</td><td>${dateLabel(order.createdAt)}</td><td class="amount-cell">${money(orderTotal(order))}</td></tr>`;
     }).join("")}</tbody></table></div>`;
     $$("[data-order]", recent).forEach((button) => button.addEventListener("click", () => showView("orders")));
   }
@@ -393,7 +422,7 @@ function emptyState(icon, title, description, label, action) {
   return `<div class="empty-state"><span class="empty-state-icon">${icon}</span><h2>${title}</h2><p>${description}</p>${label ? `<button class="button button-primary" data-empty-action>${label}</button>` : ""}</div>`;
 }
 function searchToolbar(placeholder, idValue = "view-search") {
-  return `<div class="toolbar"><label class="search-box" for="${idValue}"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><input id="${idValue}" type="search" placeholder="${placeholder}"></label><span class="result-count" id="${idValue}-count"></span></div>`;
+  return `<div class="toolbar"><label class="search-box" for="${idValue}"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><input id="${idValue}" type="search" autocomplete="off" placeholder="${placeholder}"></label><span class="result-count" id="${idValue}-count"></span></div>`;
 }
 
 function renderProducts(query = "") {
@@ -422,34 +451,29 @@ function renderProducts(query = "") {
   $$("[data-delete-product]").forEach((button) => button.addEventListener("click", () => deleteProduct(button.dataset.deleteProduct)));
 }
 
-function renderOrders(query = "", status = "all") {
+function renderOrders(query = "") {
   const panel = $("#orders-view");
   const filtered = data.orders.filter((order) => {
     const customer = customerFor(order);
-    const matches = `${order.number} ${customer?.name || ""} ${customer?.phone || ""}`.toLowerCase().includes(query.toLowerCase());
-    return matches && (status === "all" || order.status === status);
+    return `${order.number} ${customer?.name || ""} ${customer?.phone || ""}`.toLowerCase().includes(query.toLowerCase());
   }).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  panel.innerHTML = `${pageHeading("BÁN HÀNG", "Đơn hàng", "Theo dõi trạng thái, sản phẩm và tổng tiền của mỗi đơn.", "Tạo đơn hàng", "add-order-button")}<div class="toolbar order-toolbar"><label class="search-box" for="view-search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><input id="view-search" type="search" placeholder="Tìm mã đơn, tên hoặc số điện thoại..."></label><label class="filter-select"><span class="sr-only">Lọc theo trạng thái</span><select id="status-filter"><option value="all">Tất cả trạng thái</option><option value="new">Mới</option><option value="processing">Đang xử lý</option><option value="shipped">Đang giao</option><option value="delivered">Đã giao</option><option value="cancelled">Đã hủy</option></select></label><span class="result-count" id="orders-result-count"></span></div><div id="orders-content"></div>`;
+  panel.innerHTML = `${pageHeading("BÁN HÀNG", "Đơn hàng", "Danh sách sản phẩm và tổng tiền các đơn giao trực tiếp.", "Tạo đơn hàng", "add-order-button")}<div class="toolbar"><label class="search-box" for="view-search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><input id="view-search" type="search" placeholder="Tìm mã đơn, tên hoặc số điện thoại..."></label><span class="result-count" id="orders-result-count"></span></div><div id="orders-content"></div>`;
   $("#view-search").value = query;
-  $("#status-filter").value = status;
-  $("#view-search").addEventListener("input", (event) => renderOrders(event.target.value, $("#status-filter").value));
-  $("#status-filter").addEventListener("change", (event) => renderOrders($("#view-search").value, event.target.value));
+  $("#view-search").addEventListener("input", (event) => renderOrders(event.target.value));
   $("#add-order-button").addEventListener("click", openOrderDialog);
   $("#orders-result-count").textContent = `${number(filtered.length)} đơn`;
   const container = $("#orders-content");
   if (!filtered.length) {
-    container.innerHTML = emptyState('<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h2l2.2 11.2a2 2 0 0 0 2 1.6h7.7a2 2 0 0 0 1.9-1.4L22 9H7"/></svg>', query || status !== "all" ? "Không tìm thấy đơn hàng" : "Chưa có đơn hàng", query || status !== "all" ? "Thử đổi từ khóa hoặc bộ lọc trạng thái." : "Tạo đơn hàng để ghi nhận mặt hàng đã bán.", query || status !== "all" ? "" : "Tạo đơn hàng", () => openOrderDialog());
+    container.innerHTML = emptyState('<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h2l2.2 11.2a2 2 0 0 0 2 1.6h7.7a2 2 0 0 0 1.9-1.4L22 9H7"/></svg>', query ? "Không tìm thấy đơn hàng" : "Chưa có đơn hàng", query ? "Thử đổi từ khóa tìm kiếm." : "Tạo đơn hàng để ghi nhận mặt hàng đã bán.", query ? "" : "Tạo đơn hàng", () => openOrderDialog());
     const action = $("[data-empty-action]", container);
     if (action) action.addEventListener("click", openOrderDialog);
     return;
   }
-  container.innerHTML = `<div class="panel table-panel"><div class="table-wrap"><table><thead><tr><th>MÃ ĐƠN</th><th>KHÁCH HÀNG</th><th>NGÀY TẠO</th><th>MẶT HÀNG</th><th>TỔNG TIỀN</th><th>TRẠNG THÁI</th><th></th></tr></thead><tbody>${filtered.map((order) => {
+  container.innerHTML = `<div class="panel table-panel"><div class="table-wrap"><table><thead><tr><th>MÃ ĐƠN</th><th>KHÁCH HÀNG</th><th>NGÀY TẠO</th><th>MẶT HÀNG</th><th>TỔNG TIỀN</th><th></th></tr></thead><tbody>${filtered.map((order) => {
     const customer = customerFor(order);
-    const options = ["new", "processing", "shipped", "delivered", "cancelled"].map((value) => `<option value="${value}" ${value === order.status ? "selected" : ""}>${statusInfo(value)[0]}</option>`).join("");
     const itemSummary = order.lines.map((line) => `${line.name}${line.size ? ` · ${line.size}` : ""} × ${number(line.quantity)} ${line.unit || ""}`).join(", ");
-    return `<tr><td><strong class="order-number">#${escapeText(order.number)}</strong></td><td><div class="customer-cell"><span class="customer-avatar">${escapeText(initials(customer?.name || "?"))}</span><span><strong>${escapeText(customer?.name || "Khách đã xóa")}</strong><small>${escapeText(customer?.phone || "")}</small></span></div></td><td>${dateLabel(order.createdAt)}</td><td class="receipt-item-summary">${escapeText(itemSummary)}</td><td class="amount-cell">${money(orderTotal(order))}</td><td><label class="sr-only" for="status-${order.id}">Trạng thái đơn ${order.number}</label><select class="status-select ${statusInfo(order.status)[1]}" id="status-${order.id}" data-order-status="${order.id}">${options}</select></td><td><button class="row-action row-danger" data-delete-order="${order.id}">Xóa</button></td></tr>`;
+    return `<tr><td><strong class="order-number">#${escapeText(order.number)}</strong></td><td><div class="customer-cell"><span class="customer-avatar">${escapeText(initials(customer?.name || "?"))}</span><span><strong>${escapeText(customer?.name || "Khách đã xóa")}</strong><small>${escapeText(customer?.phone || "")}</small></span></div></td><td>${dateLabel(order.createdAt)}</td><td class="receipt-item-summary">${escapeText(itemSummary)}</td><td class="amount-cell">${money(orderTotal(order))}</td><td><button class="row-action row-danger" data-delete-order="${order.id}">Xóa</button></td></tr>`;
   }).join("")}</tbody></table></div><div class="table-footer">Hiển thị ${number(filtered.length)} / ${number(data.orders.length)} đơn hàng</div></div>`;
-  $$("[data-order-status]").forEach((select) => select.addEventListener("change", () => changeOrderStatus(select.dataset.orderStatus, select.value)));
   $$("[data-delete-order]").forEach((button) => button.addEventListener("click", () => deleteOrder(button.dataset.deleteOrder)));
 }
 
@@ -544,6 +568,81 @@ function renderReceipts(query = "") {
   }).join("")}</tbody></table></div><div class="table-footer">Hiển thị ${number(filtered.length)} / ${number(data.receipts.length)} phiếu nhập</div></div>`;
 }
 
+function renderExpenses(query = "") {
+  const panel = $("#expenses-view");
+  const normalizedQuery = query.toLocaleLowerCase();
+  const filtered = data.expenses.filter((expense) => `${expense.name} ${expense.note}`.toLocaleLowerCase().includes(normalizedQuery))
+    .sort((a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt));
+  const now = new Date();
+  const thisMonthTotal = data.expenses.reduce((sum, expense) => {
+    const date = new Date(`${expense.date}T00:00:00`);
+    return date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth() ? sum + expense.amount : sum;
+  }, 0);
+  const allTimeTotal = data.expenses.reduce((sum, expense) => sum + expense.amount, 0);
+  panel.innerHTML = `${pageHeading("THEO DÕI CHI TIÊU", "Chi phí vận hành", "Ghi các khoản chi thường ngày như cám, thức ăn và vật dụng chăm sóc cá.", "Ghi chi phí", "add-expense-button")}
+    <div class="expense-summary">
+      <article class="expense-summary-card"><span>Chi phí tháng này</span><strong>${money(thisMonthTotal)}</strong></article>
+      <article class="expense-summary-card"><span>Tổng chi phí đã ghi</span><strong>${money(allTimeTotal)}</strong></article>
+    </div>
+    ${searchToolbar("Tìm khoản chi hoặc ghi chú...")}<div id="expenses-content"></div>`;
+  $("#add-expense-button").addEventListener("click", openExpenseDialog);
+  $("#view-search").value = query;
+  $("#view-search").addEventListener("input", (event) => renderExpenses(event.target.value));
+  $("#view-search-count").textContent = `${number(filtered.length)} khoản chi`;
+  const container = $("#expenses-content");
+  if (!filtered.length) {
+    container.innerHTML = emptyState('<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h14v18l-3-2-4 2-4-2-3 2V3Z"/><path d="M9 8h6m-6 4h6m-6 4h3"/></svg>', query ? "Không tìm thấy khoản chi" : "Chưa có chi phí vận hành", query ? "Thử tìm bằng tên khoản chi hoặc ghi chú khác." : "Ghi lại các khoản như cám cá, thức ăn hoặc vật dụng chăm sóc.", query ? "" : "Ghi chi phí", openExpenseDialog);
+    const action = $("[data-empty-action]", container);
+    if (action) action.addEventListener("click", openExpenseDialog);
+    return;
+  }
+  container.innerHTML = `<div class="panel table-panel"><div class="table-wrap"><table><thead><tr><th>NGÀY CHI</th><th>KHOẢN CHI</th><th>GHI CHÚ</th><th>SỐ TIỀN</th><th></th></tr></thead><tbody>${filtered.map((expense) => `
+    <tr><td>${dateLabel(`${expense.date}T00:00:00`)}</td><td><strong>${escapeText(expense.name)}</strong></td><td>${escapeText(expense.note || "—")}</td><td class="amount-cell">${money(expense.amount)}</td><td><button class="row-action row-danger" data-delete-expense="${escapeText(expense.id)}">Xóa</button></td></tr>`).join("")}
+    </tbody></table></div><div class="table-footer">Hiển thị ${number(filtered.length)} / ${number(data.expenses.length)} khoản chi</div></div>`;
+  $$("[data-delete-expense]", container).forEach((button) => button.addEventListener("click", () => deleteExpense(button.dataset.deleteExpense)));
+}
+
+function openExpenseDialog() {
+  const form = $("#expense-form");
+  form.reset();
+  $("#expense-date").value = new Date().toISOString().slice(0, 10);
+  clearDialogError("expense-error");
+  openDialog($("#expense-dialog"));
+}
+
+async function createExpense(event) {
+  event.preventDefault();
+  const amount = parsePrice($("#expense-amount").value);
+  const expense = {
+    id: id(),
+    date: $("#expense-date").value,
+    name: $("#expense-name").value.trim(),
+    amount,
+    note: $("#expense-note").value.trim(),
+    createdAt: new Date().toISOString(),
+  };
+  if (!expense.date || !expense.name || !Number.isSafeInteger(expense.amount) || expense.amount <= 0) {
+    showDialogError("expense-error", "Nhập ngày chi, tên khoản chi và số tiền lớn hơn 0.");
+    return;
+  }
+  const previousData = data;
+  data = { ...data, expenses: [expense, ...data.expenses] };
+  if (!await persist()) { data = previousData; return; }
+  closeDialog($("#expense-dialog"));
+  renderCurrentView();
+  toast("Đã lưu chi phí vận hành.");
+}
+
+async function deleteExpense(expenseId) {
+  const expense = data.expenses.find((item) => item.id === expenseId);
+  if (!expense || !window.confirm(`Xóa khoản chi “${expense.name}”?`)) return;
+  const previousData = data;
+  data = { ...data, expenses: data.expenses.filter((item) => item.id !== expenseId) };
+  if (!await persist()) { data = previousData; return; }
+  renderCurrentView();
+  toast("Đã xóa khoản chi.");
+}
+
 function openReceiptDialog() {
   const form = $("#receipt-form");
   form.reset();
@@ -585,13 +684,11 @@ function addReceiptLine() {
   quantity.required = true;
   quantity.setAttribute("aria-label", "Số lượng nhập");
   const unitCost = document.createElement("input");
-  unitCost.type = "number";
   unitCost.className = "receipt-item-cost";
-  unitCost.min = "0";
-  unitCost.step = "1000";
   unitCost.required = true;
   unitCost.placeholder = "Đơn giá";
   unitCost.setAttribute("aria-label", "Đơn giá mua");
+  addPriceInput(unitCost);
   const lineTotal = document.createElement("span");
   lineTotal.className = "receipt-line-total";
   lineTotal.textContent = "—";
@@ -614,7 +711,8 @@ function updateReceiptTotal() {
   let total = 0;
   $$(".receipt-line", $("#receipt-lines")).forEach((row) => {
     const quantity = Number($(".receipt-item-quantity", row).value || 0);
-    const unitCost = Number($(".receipt-item-cost", row).value || 0);
+    const parsedCost = parsePrice($(".receipt-item-cost", row).value);
+    const unitCost = Number.isFinite(parsedCost) ? parsedCost : 0;
     const lineTotal = quantity * unitCost;
     total += lineTotal;
     $(".receipt-line-total", row).textContent = quantity > 0 ? money(lineTotal) : "—";
@@ -632,7 +730,7 @@ async function createReceipt(event) {
       name,
       unit: $(".receipt-item-unit", row).value.trim() || product?.unit || "",
       quantity: Number($(".receipt-item-quantity", row).value),
-      unitCost: Number($(".receipt-item-cost", row).value),
+      unitCost: parsePrice($(".receipt-item-cost", row).value),
     };
   });
   if (!lines.length || lines.some((line) => !line.name || !Number.isFinite(line.quantity) || line.quantity <= 0 || !Number.isFinite(line.unitCost) || line.unitCost < 0)) {
@@ -664,12 +762,13 @@ function showView(view) {
     if (current) button.setAttribute("aria-current", "page");
     else button.removeAttribute("aria-current");
   });
-  $("#breadcrumb-title").textContent = { overview: "Tổng quan", revenue: "Chi tiết doanh thu", products: "Sản phẩm", orders: "Đơn hàng", receiving: "Nhập vật tư", customers: "Khách hàng" }[view];
+  $("#breadcrumb-title").textContent = { overview: "Tổng quan", revenue: "Chi tiết doanh thu", products: "Sản phẩm", orders: "Đơn hàng", receiving: "Nhập vật tư", expenses: "Chi phí vận hành", customers: "Khách hàng" }[view];
   if (view === "overview") renderOverview();
   if (view === "revenue") renderRevenue();
   if (view === "products") renderProducts();
   if (view === "orders") renderOrders();
   if (view === "receiving") renderReceipts();
+  if (view === "expenses") renderExpenses();
   if (view === "customers") renderCustomers();
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
@@ -690,11 +789,13 @@ function openProductDialog(productId = "") {
   form.reset();
   clearDialogError("product-error");
   const product = data.products.find((item) => item.id === productId);
+  populateProductUnits(product?.unit || "cái");
   form.elements.id.value = product?.id || "";
   form.elements.name.value = product?.name || "";
   form.elements.sku.value = product?.sku || "";
   form.elements.unit.value = product?.unit || "cái";
   form.elements.costPrice.value = product?.costPrice ?? "";
+  formatPriceInput(form.elements.costPrice);
   form.elements.description.value = product?.description || "";
   $("#size-price-list").replaceChildren();
   (Array.isArray(product?.sizes) ? product.sizes : []).forEach((size) => addSizePriceRow({
@@ -720,6 +821,70 @@ function openProductDialog(productId = "") {
   $("#product-dialog-title").textContent = product ? "Cập nhật sản phẩm" : "Thêm sản phẩm";
   openDialog($("#product-dialog"));
 }
+function populateProductUnits(selectedUnit) {
+  const select = $("#product-unit");
+  const usedUnits = data.products.map((product) => product.unit).filter(Boolean);
+  const units = [...new Map([...data.units, ...usedUnits, selectedUnit]
+    .map((unit) => [unit.toLocaleLowerCase(), unit])).values()];
+  select.replaceChildren(new Option("Chọn đơn vị", ""));
+  units.forEach((unit) => select.add(new Option(unit, unit)));
+  select.add(new Option("+ Thêm mới", "__add_new__"));
+  select.value = selectedUnit;
+  select.dataset.previousValue = selectedUnit;
+  $("#unit-create").hidden = true;
+  $("#new-product-unit").value = "";
+}
+function handleProductUnitChange(event) {
+  const select = event.currentTarget;
+  if (select.value !== "__add_new__") {
+    select.dataset.previousValue = select.value;
+    return;
+  }
+  select.value = select.dataset.previousValue || "";
+  $("#unit-create").hidden = false;
+  $("#new-product-unit").focus();
+}
+async function addProductUnit() {
+  const select = $("#product-unit");
+  const unit = $("#new-product-unit").value.trim();
+  if (!unit || unit.length > 24) {
+    $("#new-product-unit").focus();
+    if (unit.length > 24) toast("Tên đơn vị tối đa 24 ký tự.", true);
+    return;
+  }
+  const existing = [...select.options].find((option) => option.value.toLocaleLowerCase() === unit.toLocaleLowerCase());
+  const savedUnit = existing?.value || unit;
+  const knownUnit = data.units.some((item) => item.toLocaleLowerCase() === savedUnit.toLocaleLowerCase());
+  if (!knownUnit) {
+    const oldData = data;
+    const addButton = $("#add-product-unit");
+    const cancelButton = $("#cancel-product-unit");
+    addButton.disabled = true;
+    cancelButton.disabled = true;
+    addButton.textContent = "Đang lưu...";
+    data = { ...data, units: [...data.units, savedUnit] };
+    const saved = await persist();
+    addButton.disabled = false;
+    cancelButton.disabled = false;
+    addButton.textContent = "Thêm";
+    if (!saved) {
+      data = oldData;
+      return;
+    }
+  }
+  if (!existing) select.add(new Option(savedUnit, savedUnit), select.options.length - 1);
+  select.value = savedUnit;
+  select.dataset.previousValue = savedUnit;
+  $("#new-product-unit").value = "";
+  $("#unit-create").hidden = true;
+  if (!knownUnit) toast("Đã lưu đơn vị tính lên database.");
+}
+function cancelProductUnit() {
+  const select = $("#product-unit");
+  select.value = select.dataset.previousValue || "";
+  $("#new-product-unit").value = "";
+  $("#unit-create").hidden = true;
+}
 function addSizePriceRow(size = {}) {
   const row = document.createElement("div");
   row.className = "size-price-row";
@@ -737,26 +902,22 @@ function addSizePriceRow(size = {}) {
   const priceField = document.createElement("div");
   const priceLabel = document.createElement("label");
   const priceInput = document.createElement("input");
-  priceInput.type = "number";
   priceInput.className = "size-price";
-  priceInput.min = "0";
-  priceInput.step = "1000";
   priceInput.required = true;
   priceInput.placeholder = "0";
   priceInput.value = size.price ?? "";
+  addPriceInput(priceInput);
   priceInput.setAttribute("aria-label", "Giá bán cho size này");
   priceLabel.textContent = "Giá bán / đơn vị";
   priceField.append(priceLabel, priceInput);
   const costField = document.createElement("div");
   const costLabel = document.createElement("label");
   const costInput = document.createElement("input");
-  costInput.type = "number";
   costInput.className = "size-cost";
-  costInput.min = "0";
-  costInput.step = "1000";
   costInput.required = true;
   costInput.placeholder = "Giá mua";
   costInput.value = size.costPrice ?? "";
+  addPriceInput(costInput);
   costInput.setAttribute("aria-label", "Giá mua cho size này");
   costLabel.textContent = "Giá mua / đơn vị";
   costField.append(costLabel, costInput);
@@ -800,7 +961,7 @@ async function submitProduct(event) {
     showDialogError("product-error", "Hoàn tất tên size, giá bán và giá mua cho từng dòng, hoặc xóa dòng chưa dùng.");
     return;
   }
-  const sizes = sizeRows.filter((size) => size.label && size.rawPrice !== "" && size.rawCost !== "").map((size) => ({ label: size.label, price: Number(size.rawPrice), costPrice: Number(size.rawCost) }));
+  const sizes = sizeRows.filter((size) => size.label && size.rawPrice !== "" && size.rawCost !== "").map((size) => ({ label: size.label, price: parsePrice(size.rawPrice), costPrice: parsePrice(size.rawCost) }));
   if (sizes.some((size) => !Number.isFinite(size.price) || size.price < 0 || !Number.isFinite(size.costPrice) || size.costPrice < 0)) {
     showDialogError("product-error", "Giá bán và giá mua theo size phải là số hợp lệ, từ 0 trở lên.");
     return;
@@ -810,7 +971,7 @@ async function submitProduct(event) {
     return;
   }
   const rawCostPrice = values.get("costPrice");
-  const costPrice = rawCostPrice === "" ? null : Number(rawCostPrice);
+  const costPrice = rawCostPrice === "" ? null : parsePrice(rawCostPrice);
   if (costPrice !== null && (!Number.isFinite(costPrice) || costPrice < 0)) {
     showDialogError("product-error", "Giá mua mặc định phải là số hợp lệ, từ 0 trở lên.");
     return;
@@ -828,11 +989,13 @@ async function submitProduct(event) {
     showDialogError("product-error", error.message || "Không thể lưu hình ảnh. Hãy thử lại.");
     return;
   }
+  const unit = String(values.get("unit")).trim();
+  const knownUnit = data.units.some((item) => item.toLocaleLowerCase() === unit.toLocaleLowerCase());
   const product = {
     id: productId || id(),
     name: String(values.get("name")).trim(),
     sku,
-    unit: String(values.get("unit")).trim(),
+    unit,
     costPrice,
     sizes,
     imageId,
@@ -841,7 +1004,11 @@ async function submitProduct(event) {
     updatedAt: new Date().toISOString(),
   };
   const oldData = data;
-  data = { ...data, products: productId ? data.products.map((item) => item.id === productId ? product : item) : [product, ...data.products] };
+  data = {
+    ...data,
+    products: productId ? data.products.map((item) => item.id === productId ? product : item) : [product, ...data.products],
+    units: knownUnit ? data.units : [...data.units, unit],
+  };
   if (!await persist()) {
     data = oldData;
     if (selectedProductImage && imageId && imageId !== previous?.imageId) {
@@ -1018,13 +1185,11 @@ function addOrderLine() {
   qty.value = "1";
   qty.setAttribute("aria-label", "Số lượng sản phẩm");
   const priceInput = document.createElement("input");
-  priceInput.type = "number";
   priceInput.className = "line-unit-price";
-  priceInput.min = "0";
-  priceInput.step = "1000";
   priceInput.required = true;
   priceInput.placeholder = "Giá bán";
   priceInput.setAttribute("aria-label", "Đơn giá bán cho mặt hàng này");
+  addPriceInput(priceInput);
   const unit = document.createElement("span");
   unit.className = "line-unit";
   unit.textContent = "đơn vị";
@@ -1076,17 +1241,21 @@ function updateLinePrice(row, useSizePrice = false) {
   const selectedSize = $(".line-size", row).selectedOptions[0];
   const quantity = Number($(".line-quantity", row).value);
   $(".line-unit", row).textContent = option?.dataset.unit || "đơn vị";
-  if (useSizePrice) $(".line-unit-price", row).value = selectedSize?.dataset.price || "";
+  if (useSizePrice) {
+    $(".line-unit-price", row).value = selectedSize?.dataset.price || "";
+    formatPriceInput($(".line-unit-price", row));
+  }
   if (selectedSize?.value) $(".line-unit-price", row).setAttribute("aria-label", `Đơn giá bán cho ${selectedSize.value}`);
   else $(".line-unit-price", row).setAttribute("aria-label", "Đơn giá bán cho mặt hàng này");
-  const itemPrice = Number($(".line-unit-price", row).value);
+  const itemPrice = parsePrice($(".line-unit-price", row).value);
   $(".line-price", row).textContent = option?.value && quantity > 0 && $(".line-unit-price", row).value !== "" ? money(quantity * itemPrice) : "—";
   updateOrderTotal();
 }
 function updateOrderTotal() {
   const rows = $$(".order-line", $("#order-lines"));
   const total = rows.reduce((sum, row) => {
-    const price = Number($(".line-unit-price", row).value || 0);
+    const parsedPrice = parsePrice($(".line-unit-price", row).value);
+    const price = Number.isFinite(parsedPrice) ? parsedPrice : 0;
     return sum + price * Number($(".line-quantity", row).value || 0);
   }, 0);
   $("#order-total").textContent = money(total);
@@ -1149,7 +1318,7 @@ function updateOrderFishRewardSummary() {
     const product = data.products.find((item) => item.id === $(".line-product", row).value);
     const size = $(".line-size", row).value;
     const quantity = Number($(".line-quantity", row).value);
-    const price = Number($(".line-unit-price", row).value);
+    const price = parsePrice($(".line-unit-price", row).value);
     const lineName = `${product.name}${size ? ` · ${size}` : ""}`;
     const amount = Number.isFinite(price) && Number.isInteger(quantity) && quantity > 0 ? money(price * quantity) : "—";
     return `<tr><td data-label="Tên mặt hàng">${escapeText(lineName)}</td><td data-label="Số lượng">${Number.isInteger(quantity) && quantity > 0 ? number(quantity) : "—"} ${escapeText(product.unit || "cái")}</td><td data-label="Đơn giá">${Number.isFinite(price) && price >= 0 ? money(price) : "—"}</td><td data-label="Thành tiền">${amount}</td><td data-label="Số lượng tặng">${number(giftByRow.get(row) || 0)} con</td></tr>`;
@@ -1176,7 +1345,7 @@ async function createOrder(event) {
     const size = $(".line-size", row).selectedOptions[0];
     const rawCostPrice = size?.value ? size.dataset.costPrice : product?.costPrice;
     const costPrice = rawCostPrice === "" || rawCostPrice == null ? null : Number(rawCostPrice);
-    return product ? { productId, name: product.name, sku: product.sku, unit: product.unit || "cái", size: size?.value || "", quantity: Number($(".line-quantity", row).value), price: Number($(".line-unit-price", row).value), costPrice: Number.isFinite(costPrice) ? costPrice : null } : null;
+    return product ? { productId, name: product.name, sku: product.sku, unit: product.unit || "cái", size: size?.value || "", quantity: Number($(".line-quantity", row).value), price: parsePrice($(".line-unit-price", row).value), costPrice: Number.isFinite(costPrice) ? costPrice : null } : null;
   }).filter(Boolean);
   if (!lines.length) { showDialogError("order-error", "Thêm ít nhất một mặt hàng vào đơn."); return; }
   const missingSize = $$(".order-line", $("#order-lines")).some((row) => {
@@ -1197,7 +1366,7 @@ async function createOrder(event) {
     customer = { id: id(), name: customerName, phone: customerPhone, social: "", createdAt: now, updatedAt: now };
   }
   const serial = (Math.max(0, ...data.orders.map((order) => Number(order.number.replace(/\D/g, "")) || 0)) + 1).toString().padStart(4, "0");
-  const order = { id: id(), number: `KM-${serial}`, customerId: customer.id, lines, note: $("#order-note").value.trim(), status: "new", createdAt: now, updatedAt: now };
+  const order = { id: id(), number: `KM-${serial}`, customerId: customer.id, lines, note: $("#order-note").value.trim(), status: "delivered", createdAt: now, updatedAt: now };
   const previousData = data;
   data = {
     ...data,
@@ -1211,20 +1380,6 @@ async function createOrder(event) {
   renderCurrentView();
   const baseMessage = isNewCustomer ? `Đã tạo đơn #${order.number} và thêm khách hàng ${customer.name} vào danh bạ.` : `Đã tạo đơn #${order.number} cho ${customer.name}.`;
   toast(rewardResult.newlyPending ? `${baseMessage} Khách đã mua ${rewardResult.fishCount} con cá: nhớ tặng ${rewardResult.newlyPending} con.` : baseMessage);
-}
-async function changeOrderStatus(orderId, nextStatus) {
-  const order = data.orders.find((item) => item.id === orderId);
-  if (!order || order.status === nextStatus) return;
-  const previousData = data;
-  data = { ...data, orders: data.orders.map((item) => item.id === orderId ? { ...item, status: nextStatus, updatedAt: new Date().toISOString() } : item) };
-  const rewardResult = reconcileFishRewards(order.customerId, orderId);
-  data = { ...data, fishRewards: rewardResult.rewards };
-  if (!await persist()) { data = previousData; return; }
-  renderCurrentView();
-  const customer = customerFor(order);
-  toast(rewardResult.newlyPending
-    ? `Đơn được cập nhật. ${customer?.name || "Khách hàng"} đã đủ mốc tặng cá; cần tặng ${rewardResult.newlyPending} con.`
-    : nextStatus === "cancelled" ? "Đã hủy đơn hàng." : "Đã cập nhật trạng thái đơn.");
 }
 async function deleteOrder(orderId) {
   const order = data.orders.find((item) => item.id === orderId);
@@ -1245,8 +1400,9 @@ function renderCurrentView() {
   if (activeView === "overview") renderOverview();
   if (activeView === "revenue") renderRevenue($("#revenue-period")?.value || "month");
   if (activeView === "products") renderProducts($("#view-search")?.value || "");
-  if (activeView === "orders") renderOrders($("#view-search")?.value || "", $("#status-filter")?.value || "all");
+  if (activeView === "orders") renderOrders($("#view-search")?.value || "");
   if (activeView === "receiving") renderReceipts($("#view-search")?.value || "");
+  if (activeView === "expenses") renderExpenses($("#view-search")?.value || "");
   if (activeView === "customers") renderCustomers($("#view-search")?.value || "");
   renderCounts();
 }
@@ -1271,7 +1427,7 @@ async function downloadBackup(store, imageLoader) {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
-  anchor.download = `kho-moc-sao-luu-${new Date().toISOString().slice(0, 10)}.json`;
+  anchor.download = `fish-store-backup-${new Date().toISOString().slice(0, 10)}.json`;
   document.body.append(anchor);
   anchor.click();
   anchor.remove();
@@ -1285,20 +1441,6 @@ async function exportData() {
   } catch (error) {
     console.error("Could not export store data.", error);
     toast(error.message || "Không thể tạo bản sao lưu. Hãy thử lại.", true);
-  }
-}
-
-async function exportLocalBackup() {
-  try {
-    if (!hasLocalData(localData)) {
-      toast("Không có dữ liệu cũ trên thiết bị này để xuất.", true);
-      return;
-    }
-    await downloadBackup(localData, getLocalProductImage);
-    toast("Đã tải bản sao lưu cục bộ, bao gồm hình ảnh sản phẩm.");
-  } catch (error) {
-    console.error("Could not export local backup.", error);
-    toast(error.message || "Không thể tạo bản sao lưu cục bộ.", true);
   }
 }
 
@@ -1339,6 +1481,7 @@ function bindEvents() {
     updateOrderFishRewardSummary();
   });
   $("#receipt-form").addEventListener("submit", createReceipt);
+  $("#expense-form").addEventListener("submit", createExpense);
   $("#add-receipt-line").addEventListener("click", addReceiptLine);
   $("#receipt-lines").addEventListener("input", updateReceiptTotal);
   $("#add-order-line").addEventListener("click", addOrderLine);
@@ -1353,6 +1496,22 @@ function bindEvents() {
     if (event.target === dialog) closeDialog(dialog);
   }));
   $$("[data-go]").forEach((button) => button.addEventListener("click", () => showView(button.dataset.go)));
+}
+
+function setLoginMode(setupRequired) {
+  ownerSetupRequired = setupRequired;
+  $("#login-setup-note").hidden = !setupRequired;
+  $("#login-account-label").textContent = setupRequired ? "Tài khoản chủ mới" : "Tài khoản";
+  $("#login-password-label").textContent = setupRequired ? "Mật khẩu mới (tối thiểu 12 ký tự)" : "Mật khẩu";
+  $("#login-account").minLength = setupRequired ? 3 : 0;
+  $("#login-password").minLength = setupRequired ? 12 : 0;
+  $("#login-password").autocomplete = "off";
+  $("#login-password-confirm-label").hidden = !setupRequired;
+  $("#login-password-confirm").hidden = !setupRequired;
+  $("#login-password-confirm").required = setupRequired;
+  $("#login-password-confirm").minLength = setupRequired ? 12 : 0;
+  $("#login-password-confirm").value = "";
+  $("#login-submit").textContent = setupRequired ? "Tạo tài khoản chủ" : "Đăng nhập";
 }
 
 function showLogin(message = "") {
@@ -1373,45 +1532,7 @@ function hasLocalData(store) {
   return Object.values(store).some((items) => items.length > 0);
 }
 
-async function readBackupFile() {
-  const file = $("#login-backup").files[0];
-  if (!file) return null;
-  if (file.size > 50 * 1024 * 1024) throw new Error("File sao lưu lớn hơn giới hạn 50 MB.");
-  let backup;
-  try {
-    backup = JSON.parse(await file.text());
-  } catch {
-    throw new Error("File sao lưu không phải JSON hợp lệ.");
-  }
-  if (!backup || typeof backup !== "object" || !["products", "customers", "orders", "receipts"].every((key) => Array.isArray(backup[key]))) {
-    throw new Error("File không đúng định dạng sao lưu Kho Mộc.");
-  }
-  return backup;
-}
-
-async function uploadBackupImages(images = []) {
-  for (const image of images) {
-    if (!image || typeof image.id !== "string" || typeof image.dataUrl !== "string") continue;
-    const match = image.dataUrl.match(/^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/);
-    if (!match) throw new Error("File sao lưu có hình ảnh không đúng định dạng.");
-    const binary = atob(match[2]);
-    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
-    await storeProductImage(new Blob([bytes], { type: match[1] }), image.id);
-  }
-}
-
-async function migrateLocalData(backup) {
-  if (backup) {
-    const imported = normalizeData(backup);
-    const backupImages = Array.isArray(backup.productImages) ? backup.productImages : [];
-    const imageIds = new Set(backupImages.map((image) => image?.id));
-    const missingImage = imported.products.find((product) => product.imageId && !imageIds.has(product.imageId));
-    if (missingImage) throw new Error(`File sao lưu thiếu hình ảnh của sản phẩm “${missingImage.name}”. Hãy xuất lại file sao lưu có kèm hình ảnh.`);
-    await uploadBackupImages(backupImages);
-    data = imported;
-    return;
-  }
-
+async function migrateLocalData() {
   data = structuredClone(localData);
   for (const product of data.products) {
     if (!product.imageId) continue;
@@ -1421,7 +1542,9 @@ async function migrateLocalData(backup) {
   }
 }
 
-async function startAuthenticatedApp() {
+async function startCloudApp() {
+  if (cloudStartupInProgress) return;
+  cloudStartupInProgress = true;
   try {
     const cloud = await apiJson("/api/store");
     cloudRevision = cloud.revision;
@@ -1431,14 +1554,13 @@ async function startAuthenticatedApp() {
         console.error("Could not cache cloud data locally.", error);
       }
     } else {
-      const backup = await readBackupFile();
-      if (backup || hasLocalData(localData)) {
-        await migrateLocalData(backup);
+      if (hasLocalData(localData)) {
+        await migrateLocalData();
         if (!await persist()) throw new Error("Không thể nhập dữ liệu hiện có vào cloud. Dữ liệu trên thiết bị cũ vẫn được giữ nguyên.");
         toast("Đã nhập dữ liệu cửa hàng lên cloud thành công.");
-      } else if (!window.confirm("Cloud chưa có dữ liệu và không tìm thấy dữ liệu cũ trên thiết bị này. Nếu dữ liệu đang ở localhost, hãy hủy, mở app cũ, xuất file sao lưu rồi chọn file sau khi đăng nhập. Bạn có muốn bắt đầu cửa hàng mới không?")) {
-        showLogin("Hãy chọn file sao lưu cũ hoặc đăng nhập trên thiết bị đang có dữ liệu để nhập lên cloud.");
-        return;
+      } else {
+        data = structuredClone(emptyData);
+        if (!await persist()) throw new Error("Không thể khởi tạo dữ liệu cửa hàng.");
       }
     }
 
@@ -1451,34 +1573,13 @@ async function startAuthenticatedApp() {
     }
     if (!cloudRefreshTimer) cloudRefreshTimer = window.setInterval(refreshCloudData, 30000);
     renderOverview();
+    return true;
   } catch (error) {
     console.error("Could not initialize cloud store.", error);
-    showLogin(error.message || "Không thể tải dữ liệu online. Kiểm tra cấu hình và kết nối rồi thử lại.");
-  }
-
-  async function refreshCloudData() {
-    if (cloudRefreshInProgress || document.hidden || pendingCloudWrites || $$("dialog[open]").length) return;
-    cloudRefreshInProgress = true;
-    try {
-      const remote = await apiJson("/api/store");
-      if (pendingCloudWrites || $$("dialog[open]").length) return;
-      if (remote.revision <= cloudRevision) return;
-      data = normalizeData(remote.data);
-      cloudRevision = remote.revision;
-      try { localStorage.setItem(KEY, JSON.stringify(data)); } catch (error) {
-        console.error("Could not cache refreshed cloud data locally.", error);
-      }
-      renderCurrentView();
-      toast("Đã cập nhật dữ liệu mới nhất từ thiết bị khác.");
-    } catch (error) {
-      if (error.message === "Please sign in again.") {
-        showLogin("Phiên đăng nhập đã hết hạn. Đăng nhập lại để tiếp tục.");
-        return;
-      }
-      console.error("Could not refresh cloud data.", error);
-    } finally {
-      cloudRefreshInProgress = false;
-    }
+    showLogin(error.message || "Không thể tải dữ liệu online. Kiểm tra kết nối rồi thử lại.");
+    return false;
+  } finally {
+    cloudStartupInProgress = false;
   }
 }
 
@@ -1486,21 +1587,27 @@ async function handleLogin(event) {
   event.preventDefault();
   const button = $("#login-submit");
   button.disabled = true;
-  button.textContent = "Đang đăng nhập...";
+  button.textContent = ownerSetupRequired ? "Đang tạo tài khoản..." : "Đang đăng nhập...";
   $("#login-error").hidden = true;
   try {
     const form = new FormData(event.currentTarget);
-    await apiJson("/api/auth/login", {
+    const account = form.get("account");
+    const password = form.get("password");
+    if (ownerSetupRequired && password !== form.get("passwordConfirm")) {
+      throw new Error("Mật khẩu nhập lại không khớp.");
+    }
+    await apiJson(ownerSetupRequired ? "/api/auth/setup" : "/api/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: form.get("email"), password: form.get("password") }),
+      body: JSON.stringify({ account, password }),
     });
-    await startAuthenticatedApp();
+    setLoginMode(false);
+    await startCloudApp();
   } catch (error) {
     showLogin(error.message || "Không thể đăng nhập. Hãy thử lại.");
   } finally {
     button.disabled = false;
-    button.textContent = "Đăng nhập";
+    button.textContent = ownerSetupRequired ? "Tạo tài khoản chủ" : "Đăng nhập";
   }
 }
 
@@ -1514,16 +1621,50 @@ async function handleLogout() {
   }
   if (cloudRefreshTimer) window.clearInterval(cloudRefreshTimer);
   cloudRefreshTimer = null;
+  cloudRevision = 0;
   data = structuredClone(emptyData);
   showLogin();
 }
 
+async function refreshCloudData() {
+  if (cloudRefreshInProgress || document.hidden || pendingCloudWrites || $$("dialog[open]").length) return;
+  cloudRefreshInProgress = true;
+  try {
+    const remote = await apiJson("/api/store");
+    if (pendingCloudWrites || $$("dialog[open]").length) return;
+    if (remote.revision <= cloudRevision) return;
+    data = normalizeData(remote.data);
+    cloudRevision = remote.revision;
+    try { localStorage.setItem(KEY, JSON.stringify(data)); } catch (error) {
+      console.error("Could not cache refreshed cloud data locally.", error);
+    }
+    renderCurrentView();
+    toast("Đã cập nhật dữ liệu mới nhất từ thiết bị khác.");
+  } catch (error) {
+    console.error("Could not refresh cloud data.", error);
+  } finally {
+    cloudRefreshInProgress = false;
+  }
+}
+
 async function init() {
   const today = new Date();
+  $$("form").forEach((form) => { form.autocomplete = "off"; });
+  $$("input:not([type='password']), textarea, select").forEach((field) => field.setAttribute("autocomplete", "off"));
   $("#today-label").textContent = today.toLocaleDateString("vi-VN", { weekday: "long" }).toUpperCase();
   $("#today-date").textContent = today.toLocaleDateString("vi-VN", { day: "numeric", month: "long", year: "numeric" }).toUpperCase();
+  addPriceInput($("#product-cost-price"));
+  addPriceInput($("#expense-amount"));
+  $("#product-unit").addEventListener("change", handleProductUnitChange);
+  $("#add-product-unit").addEventListener("click", addProductUnit);
+  $("#cancel-product-unit").addEventListener("click", cancelProductUnit);
+  $("#new-product-unit").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      addProductUnit();
+    }
+  });
   $("#login-form").addEventListener("submit", handleLogin);
-  $("#export-local-backup").addEventListener("click", exportLocalBackup);
   $("#logout-button").addEventListener("click", handleLogout);
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) refreshCloudData();
@@ -1531,10 +1672,16 @@ async function init() {
   showLogin();
   try {
     const response = await fetch("/api/auth/session", { credentials: "same-origin" });
-    if (response.ok) await startAuthenticatedApp();
-    else if (response.status !== 401) showLogin("Không thể kết nối dịch vụ đăng nhập.");
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || "Không thể kiểm tra trạng thái đăng nhập.");
+    if (result.authenticated) {
+      setLoginMode(false);
+      await startCloudApp();
+    } else {
+      setLoginMode(Boolean(result.setupRequired));
+    }
   } catch (error) {
-    console.error("Could not check cloud session.", error);
+    console.error("Could not check owner session.", error);
     showLogin("Không kết nối được máy chủ. Kiểm tra kết nối internet rồi tải lại trang.");
   }
 }

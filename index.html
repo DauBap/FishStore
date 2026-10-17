@@ -4,8 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#f8faf9">
-    <meta name="description" content="Quản lý sản phẩm, đơn bán và thông tin khách hàng.">
-    <title>Kho Mộc — Quản lý bán hàng</title>
+    <meta name="description" content="Fish Store — Quản lý sản phẩm, đơn bán và thông tin khách hàng.">
+    <title>Fish Store — Quản lý bán hàng</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
@@ -13,27 +13,26 @@
   </head>
   <body>
     <main class="login-screen" id="login-screen" hidden>
-      <form class="login-card" id="login-form">
-        <span class="login-brand">kho<span>mộc</span></span>
+      <form class="login-card" id="login-form" autocomplete="off">
+        <span class="login-brand">Fish Store</span>
         <h1>Đăng nhập cửa hàng</h1>
-        <p>Dữ liệu cửa hàng được đồng bộ an toàn giữa các thiết bị.</p>
-        <label for="login-email">Email</label>
-        <input id="login-email" name="email" type="email" autocomplete="username" required>
-        <label for="login-password">Mật khẩu</label>
-        <input id="login-password" name="password" type="password" autocomplete="current-password" required>
-        <label for="login-backup">Bản sao lưu từ app cũ (nếu chuyển từ localhost)</label>
-        <input id="login-backup" name="backup" type="file" accept="application/json,.json">
-        <small class="login-help">Trên app cũ, bấm “Xuất dữ liệu” trước khi chuyển. File chỉ được nhập nếu cloud chưa có dữ liệu.</small>
-        <button class="link-button login-export-local" id="export-local-backup" type="button">Xuất dữ liệu cũ trên thiết bị này</button>
+        <p>Đăng nhập để truy cập dữ liệu cửa hàng.</p>
+        <p class="login-setup-note" id="login-setup-note" hidden>Chưa có tài khoản chủ. Tạo tài khoản đầu tiên; mật khẩu sẽ được lưu dạng băm bảo mật trong Neon.</p>
+        <label for="login-account" id="login-account-label">Tài khoản</label>
+        <input id="login-account" name="account" type="text" autocomplete="off" maxlength="64" required>
+        <label for="login-password" id="login-password-label">Mật khẩu</label>
+        <input id="login-password" name="password" type="password" autocomplete="new-password" maxlength="1024" required>
+        <label for="login-password-confirm" id="login-password-confirm-label" hidden>Nhập lại mật khẩu</label>
+        <input id="login-password-confirm" name="passwordConfirm" type="password" autocomplete="new-password" maxlength="1024" hidden>
         <p class="login-error" id="login-error" role="alert" hidden></p>
         <button class="button button-primary" id="login-submit" type="submit">Đăng nhập</button>
       </form>
     </main>
     <div class="app-shell" id="app-shell" hidden>
       <aside class="sidebar" aria-label="Điều hướng chính">
-        <a class="brand" href="#" aria-label="Kho Mộc trang chủ">
+        <a class="brand" href="#" aria-label="Fish Store trang chủ">
           <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="M4 11.5 16 5l12 6.5v13L16 31 4 24.5v-13Z" fill="currentColor"/><path d="m4 11.5 12 7 12-7M16 19v12M10 8.3l12 7"/></svg></span>
-          <span>kho<span>mộc</span></span>
+          <span>Fish Store</span>
         </a>
         <div class="store-switch"><span class="store-avatar">M</span><span><strong>Cửa hàng của bạn</strong><small>Đồng bộ online</small></span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4"/></svg></div>
         <p class="nav-label">TỔNG QUAN</p>
@@ -42,6 +41,7 @@
           <button class="nav-item" data-view="orders" aria-label="Đơn hàng"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h2l2.2 11.2a2 2 0 0 0 2 1.6h7.7a2 2 0 0 0 1.9-1.4L22 9H7"/><circle cx="10" cy="21" r="1"/><circle cx="18" cy="21" r="1"/></svg><span>Đơn hàng</span><span class="nav-count" id="order-count">0</span></button>
           <button class="nav-item" data-view="products" aria-label="Sản phẩm"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 12 9 5 9-5M3 16l9 5 9-5M12 13v8"/></svg><span>Sản phẩm</span></button>
           <button class="nav-item" data-view="receiving" aria-label="Nhập vật tư"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5"/><path d="M5 16v4a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-4"/></svg><span>Nhập vật tư</span><span class="nav-count" id="receiving-count">0</span></button>
+          <button class="nav-item" data-view="expenses" aria-label="Chi phí vận hành"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h14v18l-3-2-4 2-4-2-3 2V3Z"/><path d="M9 8h6m-6 4h6m-6 4h3"/></svg><span>Chi phí vận hành</span><span class="nav-count" id="expense-count">0</span></button>
           <button class="nav-item" data-view="customers" aria-label="Khách hàng"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3"/><path d="M3 20v-1a6 6 0 0 1 12 0v1M16 5a3 3 0 0 1 0 6m2 3a5 5 0 0 1 3 4.6V20"/></svg><span>Khách hàng</span></button>
         </nav>
         <div class="sidebar-bottom">
@@ -60,7 +60,7 @@
           <div class="page-heading"><div><div class="eyebrow"><span></span><span id="today-label"></span>, <span id="today-date"></span></div><h1>Chào bạn, chủ cửa hàng</h1><p>Theo dõi hoạt động kinh doanh của bạn hôm nay.</p></div><button class="button button-primary" id="overview-new-order"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg> Tạo đơn hàng</button></div>
           <div class="metrics-grid">
             <article class="metric-card metric-card-link"><div class="metric-top"><span>Doanh thu</span><span class="metric-icon revenue-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2v20m5-15H9.5a3.5 3.5 0 1 0 0 7h5a3.5 3.5 0 1 1 0 7H6"/></svg></span></div><button class="metric-value metric-link" id="metric-revenue" type="button" aria-label="Mở chi tiết doanh thu">0 ₫</button><small>Tổng tiền đơn chưa hủy · Xem lỗ lãi →</small></article>
-            <article class="metric-card"><div class="metric-top"><span>Đơn hàng</span><span class="metric-icon orders-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h2l2.2 11.2a2 2 0 0 0 2 1.6h7.7a2 2 0 0 0 1.9-1.4L22 9H7"/><circle cx="10" cy="21" r="1"/><circle cx="18" cy="21" r="1"/></svg></span></div><strong class="metric-value" id="metric-orders">0</strong><small id="metric-pending">0 đơn cần xử lý</small></article>
+            <article class="metric-card"><div class="metric-top"><span>Đơn hàng</span><span class="metric-icon orders-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h2l2.2 11.2a2 2 0 0 0 2 1.6h7.7a2 2 0 0 0 1.9-1.4L22 9H7"/><circle cx="10" cy="21" r="1"/><circle cx="18" cy="21" r="1"/></svg></span></div><strong class="metric-value" id="metric-orders">0</strong><small id="metric-pending">Giao trực tiếp</small></article>
             <article class="metric-card"><div class="metric-top"><span>Sản phẩm</span><span class="metric-icon products-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 12 9 5 9-5M3 16l9 5 9-5"/></svg></span></div><strong class="metric-value" id="metric-products">0</strong><small>Đang được quản lý trong danh mục</small></article>
             <article class="metric-card"><div class="metric-top"><span>Khách hàng</span><span class="metric-icon customers-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3"/><path d="M3 20v-1a6 6 0 0 1 12 0v1m1-14a3 3 0 0 1 0 6m2 3a5 5 0 0 1 3 4v1"/></svg></span></div><strong class="metric-value" id="metric-customers">0</strong><small>Được lưu trong danh bạ cửa hàng</small></article>
           </div>
@@ -68,7 +68,7 @@
             <section class="panel recent-panel"><div class="panel-heading"><div><h2>Đơn hàng gần đây</h2><p>Theo dõi những đơn mới nhất</p></div><button class="link-button" data-go="orders">Tất cả đơn hàng →</button></div><div id="recent-orders"></div></section>
             <section class="panel featured-panel"><div class="panel-heading"><div><h2>Sản phẩm gần đây</h2><p>Một số mặt hàng trong danh mục</p></div><button class="link-button" data-go="products">Tất cả sản phẩm →</button></div><div id="featured-products"></div></section>
           </div>
-          <section class="panel reward-panel"><div class="panel-heading"><div><h2>Quà tặng cá cần chuẩn bị</h2><p>Tặng 1 con cho mỗi mốc tích lũy đủ 10 con đã mua</p></div><span class="reward-count" id="reward-count">0</span></div><div id="fish-rewards"></div></section>
+          <section class="panel reward-panel"><div class="panel-heading"><div><h2>Quà tặng cá</h2><p>Tặng 1 con cho mỗi mốc tích lũy đủ 10 con đã mua</p></div><div class="reward-counts"><span class="gifted-fish-count"><strong id="gifted-fish-count">0</strong> con đã tặng</span><span class="reward-count" id="reward-count" aria-label="Số quà cần tặng">0</span></div></div><div id="fish-rewards"></div></section>
           <div class="privacy-reminder"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22s8-4 8-11V5l-8-3-8 3v6c0 7 8 11 8 11Z"/><path d="M9 12h6"/></svg><span><strong>Lưu ý về dữ liệu:</strong> dữ liệu đang đồng bộ với database online. Hãy xuất bản sao lưu định kỳ.</span><button id="export-data-button">Xuất dữ liệu</button></div>
         </section>
 
@@ -76,18 +76,20 @@
         <section class="view-panel content-view" id="revenue-view" hidden></section>
         <section class="view-panel content-view" id="products-view" hidden></section>
         <section class="view-panel content-view" id="receiving-view" hidden></section>
+        <section class="view-panel content-view" id="expenses-view" hidden></section>
         <section class="view-panel content-view" id="customers-view" hidden></section>
-        <footer class="app-footer"><span>Kho Mộc · Quản lý bán hàng cá nhân</span><button id="footer-data-button">Quyền riêng tư &amp; dữ liệu</button></footer>
+        <footer class="app-footer"><span>Fish Store · Quản lý bán hàng cá nhân</span><button id="footer-data-button">Quyền riêng tư &amp; dữ liệu</button></footer>
       </main>
     </div>
 
     <dialog class="app-dialog" id="product-dialog" aria-labelledby="product-dialog-title">
-      <form id="product-form">
+      <form id="product-form" autocomplete="off">
         <div class="dialog-heading"><div><span class="dialog-eyebrow">DANH MỤC HÀNG HÓA</span><h2 id="product-dialog-title">Thêm sản phẩm</h2></div><button type="button" class="icon-button" data-close aria-label="Đóng"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m18 6-12 12M6 6l12 12"/></svg></button></div>
         <input type="hidden" name="id">
-        <label for="product-name">Tên sản phẩm <i>*</i></label><input id="product-name" name="name" required maxlength="100" placeholder="Ví dụ: Bình giữ nhiệt 500ml">
-        <div class="field-grid"><div><label for="product-sku">Mã hàng (SKU)</label><input id="product-sku" name="sku" maxlength="40" placeholder="VD: BGN-001"></div><div><label for="product-unit">Đơn vị tính <i>*</i></label><input id="product-unit" name="unit" required maxlength="24" placeholder="Cái, hộp, kg..."></div></div>
-        <label for="product-cost-price">Giá mua mặc định / đơn vị</label><div class="input-suffix"><input id="product-cost-price" name="costPrice" type="number" min="0" step="1000" placeholder="Không chia size"><span>₫</span></div>
+        <label for="product-name">Tên sản phẩm <i>*</i></label><input id="product-name" name="name" required maxlength="100">
+        <div class="field-grid"><div><label for="product-sku">Mã hàng (SKU)</label><input id="product-sku" name="sku" maxlength="40" placeholder="VD: BGN-001"></div><div><label for="product-unit">Đơn vị tính <i>*</i></label><select id="product-unit" name="unit" required></select></div></div>
+        <div class="unit-create" id="unit-create" hidden><label for="new-product-unit">Đơn vị mới</label><input id="new-product-unit" maxlength="24" placeholder="Nhập tên đơn vị"><button type="button" class="button button-secondary" id="add-product-unit">Thêm</button><button type="button" class="row-action" id="cancel-product-unit">Hủy</button></div>
+        <label for="product-cost-price">Giá mua mặc định / đơn vị</label><div class="input-suffix"><input id="product-cost-price" name="costPrice" type="text" inputmode="numeric" data-price-input placeholder="Không chia size"><span>₫</span></div>
         <section class="size-pricing" aria-labelledby="size-pricing-title">
           <div class="size-pricing-heading"><div><strong id="size-pricing-title">Size, giá bán và giá mua</strong><small>Giá mua theo size giúp tính lãi gộp chính xác hơn. Nếu không chia size, dùng giá mua mặc định.</small></div><button type="button" class="link-button" id="add-size-price">+ Thêm size</button></div>
           <div class="size-price-list" id="size-price-list"></div>
@@ -106,12 +108,12 @@
     </dialog>
 
     <dialog class="app-dialog" id="order-dialog" aria-labelledby="order-dialog-title">
-      <form id="order-form">
+      <form id="order-form" autocomplete="off">
         <div class="dialog-heading"><div><span class="dialog-eyebrow">BÁN HÀNG</span><h2 id="order-dialog-title">Tạo đơn hàng</h2></div><button type="button" class="icon-button" data-close aria-label="Đóng"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m18 6-12 12M6 6l12 12"/></svg></button></div>
         <p class="dialog-description">Nhập số điện thoại để gắn đơn với khách đã có hoặc tạo hồ sơ mới cùng lúc lưu đơn.</p>
         <div class="field-grid order-customer-fields">
-          <div><label for="order-customer-phone">Số điện thoại <i>*</i></label><input id="order-customer-phone" name="customerPhone" type="tel" inputmode="tel" autocomplete="tel" maxlength="20" required placeholder="09xx xxx xxx"></div>
-          <div><label for="order-customer-name">Họ và tên <span id="order-name-required" hidden><i>*</i></span></label><input id="order-customer-name" name="customerName" autocomplete="name" maxlength="100" placeholder="Tên khách hàng"></div>
+          <div><label for="order-customer-phone">Số điện thoại <i>*</i></label><input id="order-customer-phone" name="customerPhone" type="tel" inputmode="tel" autocomplete="off" maxlength="20" required placeholder="09xx xxx xxx"></div>
+          <div><label for="order-customer-name">Họ và tên <span id="order-name-required" hidden><i>*</i></span></label><input id="order-customer-name" name="customerName" autocomplete="off" maxlength="100" placeholder="Tên khách hàng"></div>
         </div>
         <p class="order-customer-match" id="order-customer-match" role="status" aria-live="polite"></p>
         <div class="order-items-heading"><strong>Sản phẩm trong đơn</strong><button type="button" id="add-order-line" class="link-button">+ Thêm mặt hàng</button></div>
@@ -128,13 +130,18 @@
         </section>
         <div class="order-total"><span>Tổng đơn hàng<small id="order-quantity-total"></small></span><strong id="order-total">0 ₫</strong></div>
         <label for="order-note">Ghi chú đơn hàng</label><textarea id="order-note" name="note" rows="2" maxlength="300" placeholder="Ghi chú giao hàng, yêu cầu của khách..."></textarea>
+        <section class="order-payment-qr" aria-labelledby="order-payment-qr-title">
+          <h3 id="order-payment-qr-title">Thanh toán bằng mã QR</h3>
+          <img src="assets/payment-qr.png" alt="Mã QR thanh toán VietQR của cửa hàng" width="768" height="837">
+          <p>Quét mã để thanh toán đơn hàng</p>
+        </section>
         <div class="dialog-error" id="order-error" role="alert" hidden></div>
         <div class="dialog-actions"><button type="button" class="button button-secondary" data-close>Hủy</button><button type="submit" class="button button-primary">Tạo đơn hàng</button></div>
       </form>
     </dialog>
 
     <dialog class="app-dialog" id="receipt-dialog" aria-labelledby="receipt-dialog-title">
-      <form id="receipt-form">
+      <form id="receipt-form" autocomplete="off">
         <div class="dialog-heading"><div><span class="dialog-eyebrow">THEO DÕI CHI PHÍ NHẬP</span><h2 id="receipt-dialog-title">Ghi nhận nhập vật tư</h2></div><button type="button" class="icon-button" data-close aria-label="Đóng"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m18 6-12 12M6 6l12 12"/></svg></button></div>
         <p class="dialog-description">Lưu lịch sử mặt hàng đã mua, số lượng và chi phí. Phiếu nhập không thay đổi tồn kho.</p>
         <div class="field-grid"><div><label for="receipt-date">Ngày nhập <i>*</i></label><input id="receipt-date" name="date" type="date" required></div><div><label for="receipt-supplier">Nhà cung cấp</label><input id="receipt-supplier" name="supplier" maxlength="100" placeholder="Tên nhà cung cấp"></div></div>
@@ -147,12 +154,25 @@
       </form>
     </dialog>
 
+    <dialog class="app-dialog" id="expense-dialog" aria-labelledby="expense-dialog-title">
+      <form id="expense-form" autocomplete="off">
+        <div class="dialog-heading"><div><span class="dialog-eyebrow">CHI PHÍ CỬA HÀNG</span><h2 id="expense-dialog-title">Ghi chi phí vận hành</h2></div><button type="button" class="icon-button" data-close aria-label="Đóng"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m18 6-12 12M6 6l12 12"/></svg></button></div>
+        <p class="dialog-description">Ghi các khoản như cám, thức ăn, vật dụng và chi phí chăm sóc cá.</p>
+        <label for="expense-date">Ngày chi <i>*</i></label><input id="expense-date" name="date" type="date" required>
+        <label for="expense-name">Khoản chi <i>*</i></label><input id="expense-name" name="name" required maxlength="100" placeholder="Ví dụ: Cám cá, thuốc xử lý nước">
+        <label for="expense-amount">Số tiền <i>*</i></label><div class="input-suffix"><input id="expense-amount" name="amount" type="text" inputmode="numeric" data-price-input required placeholder="0"><span>₫</span></div>
+        <label for="expense-note">Ghi chú</label><textarea id="expense-note" name="note" rows="2" maxlength="300" placeholder="Thông tin thêm (không bắt buộc)"></textarea>
+        <div class="dialog-error" id="expense-error" role="alert" hidden></div>
+        <div class="dialog-actions"><button type="button" class="button button-secondary" data-close>Hủy</button><button type="submit" class="button button-primary">Lưu chi phí</button></div>
+      </form>
+    </dialog>
+
     <dialog class="app-dialog" id="customer-dialog" aria-labelledby="customer-dialog-title">
-      <form id="customer-form">
+      <form id="customer-form" autocomplete="off">
         <div class="dialog-heading"><div><span class="dialog-eyebrow">DANH BẠ CỬA HÀNG</span><h2 id="customer-dialog-title">Thêm khách hàng</h2></div><button type="button" class="icon-button" data-close aria-label="Đóng"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m18 6-12 12M6 6l12 12"/></svg></button></div>
         <input type="hidden" name="id">
-        <label for="customer-name">Họ và tên <i>*</i></label><input id="customer-name" name="name" required maxlength="100" autocomplete="name" placeholder="Nhập tên khách hàng">
-        <label for="customer-phone">Số điện thoại <i>*</i></label><input id="customer-phone" name="phone" required type="tel" maxlength="20" autocomplete="tel" placeholder="09xx xxx xxx">
+        <label for="customer-name">Họ và tên <i>*</i></label><input id="customer-name" name="name" required maxlength="100" autocomplete="off" placeholder="Nhập tên khách hàng">
+        <label for="customer-phone">Số điện thoại <i>*</i></label><input id="customer-phone" name="phone" required type="tel" maxlength="20" autocomplete="off" placeholder="09xx xxx xxx">
         <label for="customer-social">Link mạng xã hội</label><input id="customer-social" name="social" type="url" placeholder="https://facebook.com/...">
         <div class="dialog-error" id="customer-error" role="alert" hidden></div>
         <div class="dialog-actions"><button type="button" class="button button-secondary" data-close>Hủy</button><button type="submit" class="button button-primary">Lưu khách hàng</button></div>
@@ -161,7 +181,7 @@
 
     <dialog class="app-dialog info-dialog" id="data-dialog" aria-labelledby="data-dialog-title">
       <div class="dialog-heading"><div><span class="dialog-eyebrow">QUYỀN RIÊNG TƯ</span><h2 id="data-dialog-title">Dữ liệu được lưu ở đâu?</h2></div><button type="button" class="icon-button" data-close aria-label="Đóng"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m18 6-12 12M6 6l12 12"/></svg></button></div>
-      <div class="info-copy"><p>Sản phẩm, đơn hàng, phiếu nhập, quà tặng, hình ảnh và thông tin khách hàng được đồng bộ qua tài khoản cửa hàng và lưu trong database online.</p><p>Chỉ người có tài khoản cửa hàng mới truy cập được dữ liệu. Đăng xuất trên thiết bị dùng chung sau khi hoàn tất.</p><p>Hãy dùng nút <strong>Xuất dữ liệu</strong> để tải bản sao lưu định kỳ; tệp sao lưu bao gồm cả hình ảnh sản phẩm.</p></div>
+      <div class="info-copy"><p>Sản phẩm, đơn hàng, phiếu nhập, chi phí vận hành, quà tặng, hình ảnh và thông tin khách hàng được đồng bộ và lưu trong database online.</p><p>API yêu cầu đăng nhập tài khoản cửa hàng. Hãy đăng xuất trên thiết bị dùng chung sau khi hoàn tất.</p><p>Hãy dùng nút <strong>Xuất dữ liệu</strong> để tải bản sao lưu định kỳ; tệp sao lưu bao gồm cả hình ảnh sản phẩm.</p></div>
       <div class="dialog-actions"><button type="button" class="button button-secondary" id="dialog-export-button">Xuất dữ liệu</button><button type="button" class="button button-primary" data-close>Đã hiểu</button></div>
     </dialog>
     <div class="toast-region" id="toast-region" role="status" aria-live="polite"></div>

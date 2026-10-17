@@ -12,20 +12,18 @@ const MAX_CHUNK_BYTES = 3 * 1024 * 1024;
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const ALLOWED_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 
-async function readImageBody(req) {
-  if (req.body != null) {
-    const value = Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body);
-    if (value.length > MAX_IMAGE_BYTES) throw Object.assign(new Error("Image is larger than 8 MB."), { statusCode: 413 });
-    return value;
+function readImageBody(body) {
+  const encoded = body && typeof body === "object" ? body.data : null;
+  if (typeof encoded !== "string" ||
+      !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded)) {
+    throw Object.assign(new Error("Image upload body is invalid."), { statusCode: 400 });
   }
-  const chunks = [];
-  let length = 0;
-  for await (const chunk of req) {
-    length += chunk.length;
-    if (length > MAX_IMAGE_BYTES) throw Object.assign(new Error("Image is larger than 8 MB."), { statusCode: 413 });
-    chunks.push(chunk);
+  const image = Buffer.from(encoded, "base64");
+  if (image.toString("base64") !== encoded) {
+    throw Object.assign(new Error("Image upload body is invalid."), { statusCode: 400 });
   }
-  return Buffer.concat(chunks);
+  if (image.length > MAX_IMAGE_BYTES) throw Object.assign(new Error("Image is larger than 8 MB."), { statusCode: 413 });
+  return image;
 }
 
 module.exports = async function handler(req, res) {
@@ -42,7 +40,7 @@ module.exports = async function handler(req, res) {
     await ensureSchema();
     const sql = getSql();
     if (req.method === "GET") {
-      const rows = await sql`SELECT content_type, chunk_count FROM kho_moc_images WHERE id = ${imageId}`;
+      const rows = await sql`SELECT content_type, chunk_count FROM fish_store_images WHERE id = ${imageId}`;
       if (!rows.length) return sendJson(res, 404, { error: "Image not found." });
       if (req.query?.part === undefined) {
         return sendJson(res, 200, { contentType: rows[0].content_type, parts: Number(rows[0].chunk_count) });
@@ -53,7 +51,7 @@ module.exports = async function handler(req, res) {
       }
       const chunks = await sql`
         SELECT ENCODE(content, 'base64') AS content_base64
-        FROM kho_moc_image_chunks WHERE image_id = ${imageId} AND chunk_index = ${part}
+        FROM fish_store_image_chunks WHERE image_id = ${imageId} AND chunk_index = ${part}
       `;
       if (!chunks.length) return sendJson(res, 409, { error: "Image upload is incomplete." });
       const image = Buffer.from(chunks[0].content_base64, "base64");
@@ -64,18 +62,18 @@ module.exports = async function handler(req, res) {
       return res.end(image);
     }
     if (req.method === "DELETE") {
-      await sql`DELETE FROM kho_moc_images WHERE id = ${imageId}`;
+      await sql`DELETE FROM fish_store_images WHERE id = ${imageId}`;
       return sendJson(res, 200, { deleted: true });
     }
 
-    const contentType = String(req.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
+    const contentType = String(req.body?.contentType || "").trim().toLowerCase();
     if (!ALLOWED_TYPES.has(contentType)) return sendJson(res, 415, { error: "Only JPG, PNG and WEBP images are supported." });
     const part = Number(req.query?.part);
     const parts = Number(req.query?.parts);
     if (!Number.isInteger(part) || !Number.isInteger(parts) || parts < 1 || parts > 3 || part < 0 || part >= parts) {
       return sendJson(res, 400, { error: "Image upload part is invalid." });
     }
-    const image = await readImageBody(req);
+    const image = readImageBody(req.body);
     if (!image.length || image.length > MAX_CHUNK_BYTES ||
         (part < parts - 1 && image.length !== MAX_CHUNK_BYTES) ||
         (parts === 3 && part === 2 && image.length > 2 * 1024 * 1024)) {
@@ -83,19 +81,19 @@ module.exports = async function handler(req, res) {
     }
     if (part === 0) {
       await sql`
-        INSERT INTO kho_moc_images (id, content_type, chunk_count)
+        INSERT INTO fish_store_images (id, content_type, chunk_count)
         VALUES (${imageId}, ${contentType}, ${parts})
         ON CONFLICT (id) DO UPDATE
         SET content_type = EXCLUDED.content_type, chunk_count = EXCLUDED.chunk_count, updated_at = NOW()
       `;
-      await sql`DELETE FROM kho_moc_image_chunks WHERE image_id = ${imageId}`;
+      await sql`DELETE FROM fish_store_image_chunks WHERE image_id = ${imageId}`;
     } else {
-      const existing = await sql`SELECT 1 FROM kho_moc_images WHERE id = ${imageId} AND content_type = ${contentType} AND chunk_count = ${parts}`;
+      const existing = await sql`SELECT 1 FROM fish_store_images WHERE id = ${imageId} AND content_type = ${contentType} AND chunk_count = ${parts}`;
       if (!existing.length) return sendJson(res, 409, { error: "Image upload session expired. Retry the upload." });
     }
     const base64 = image.toString("base64");
     await sql`
-      INSERT INTO kho_moc_image_chunks (image_id, chunk_index, content)
+      INSERT INTO fish_store_image_chunks (image_id, chunk_index, content)
       VALUES (${imageId}, ${part}, DECODE(${base64}, 'base64'))
       ON CONFLICT (image_id, chunk_index) DO UPDATE SET content = EXCLUDED.content
     `;
@@ -106,4 +104,4 @@ module.exports = async function handler(req, res) {
   }
 };
 
-module.exports.config = { api: { bodyParser: false } };
+module.exports.config = { api: { bodyParser: { sizeLimit: "4.5mb" } } };
