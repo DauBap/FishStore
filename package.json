@@ -1,0 +1,12 @@
+{
+  "name": "kho-moc",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Kho Mộc sales and customer management app",
+  "scripts": {
+    "check": "node --check app.js && node --check lib/server.js && node --check api/store.js && node --check api/auth/login.js && node --check api/auth/session.js && node --check api/auth/logout.js && node --check api/images/[id].js"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^1.0.0"
+  }
+}
