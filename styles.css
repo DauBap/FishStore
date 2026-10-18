@@ -104,6 +104,18 @@ h1 { margin: 8px 0 5px; color: #24322b; font: 700 25px/1.25 "Manrope", sans-seri
 .reward-panel { margin-top: 15px; overflow: hidden; }
 .reward-count { display: grid; min-width: 25px; height: 25px; padding: 0 6px; place-items: center; border-radius: 7px; color: #805809; background: #fff3dd; font-size: 10px; font-weight: 700; }
 .reward-counts { display: flex; align-items: center; gap: 8px; }
+.reward-history-link { min-height: 44px; padding: 0 7px; }
+.reward-history-dialog { width: min(520px,calc(100% - 28px)); }
+.reward-history-list { display: grid; max-height: min(55vh,460px); overflow: auto; border: 1px solid #e7ece8; border-radius: 8px; }
+.reward-history-row { display: flex; align-items: center; gap: 11px; padding: 12px; border-bottom: 1px solid #edf1ed; }
+.reward-history-row:last-child { border-bottom: 0; }
+.reward-history-delete { min-width: 44px; min-height: 44px; flex: 0 0 auto; }
+.reward-history-status { flex: 0 0 auto; padding: 5px 8px; border-radius: 6px; font-size: 9px; font-weight: 700; }
+.reward-history-status.is-gifted { color: #176544; background: #eaf5ed; }
+.reward-history-status.is-skipped { color: #765523; background: #fff3df; }
+.reward-history-details { display: grid; min-width: 0; gap: 4px; }
+.reward-history-details strong { overflow: hidden; color: #39473e; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.reward-history-details small { color: var(--muted); font-size: 10px; }
 .gifted-fish-count { color: #176544; font-size: 10px; white-space: nowrap; }
 .gifted-fish-count strong { font-weight: 700; }
 .reward-summary { padding: 10px 15px; border-bottom: 1px solid #f0f2f0; color: #805809; background: #fffaf0; font-size: 10px; font-weight: 700; }
@@ -115,7 +127,9 @@ h1 { margin: 8px 0 5px; color: #24322b; font: 700 25px/1.25 "Manrope", sans-seri
 .reward-details { display: grid; flex: 1; min-width: 0; gap: 4px; }
 .reward-details strong { overflow: hidden; color: #39473e; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .reward-details small { color: #68756d; font-size: 9px; line-height: 1.45; }
+.reward-actions { display: flex; flex: 0 0 auto; gap: 6px; }
 .reward-action { min-height: 34px; flex: 0 0 auto; padding: 0 10px; font-size: 9px; }
+.reward-skip-action { color: #6c6258; }
 .reward-empty { padding: 18px 15px; }
 .reward-pending { color: #805809; }
 .panel { min-width: 0; border: 1px solid #e4e9e6; border-radius: 9px; background: #fff; }
@@ -173,6 +187,7 @@ td { height: 51px; padding: 7px 13px; border-top: 1px solid #edf0ed; color: #596
 .table-panel th { height: 40px; padding: 0 13px; }
 .table-panel td { height: 61px; padding: 8px 13px; font-size: 10px; }
 .product-cell, .customer-cell { display: flex; align-items: center; gap: 9px; min-width: 120px; }
+.products-table { min-width: 900px; }
 .product-thumb { display: grid; width: 35px; height: 35px; flex: 0 0 auto; place-items: center; border-radius: 8px; color: #397254; background: #edf4ef; font-size: 10px; font-weight: 700; }
 .product-thumb img { width: 100%; height: 100%; border-radius: inherit; object-fit: cover; }
 .product-thumb.has-image { overflow: hidden; }
@@ -210,6 +225,16 @@ td { height: 51px; padding: 7px 13px; border-top: 1px solid #edf0ed; color: #596
 
 .app-dialog { width: min(475px,calc(100% - 28px)); max-height: min(90vh,780px); overflow: auto; padding: 22px; border: 1px solid #e2e8e4; border-radius: 11px; color: var(--ink); background: #fff; box-shadow: 0 20px 70px rgba(27,43,35,.2); }
 #receipt-dialog { width: min(820px,calc(100% - 28px)); max-height: min(92vh,860px); }
+.reward-skip-dialog { display: none; width: min(420px,calc(100% - 32px)); padding: 24px; }
+.reward-skip-dialog[open] { display: grid; grid-template-columns: 42px minmax(0,1fr); align-items: start; gap: 14px; }
+.reward-skip-icon { display: grid; width: 42px; height: 42px; place-items: center; border-radius: 12px; color: #946115; background: #fff4dc; }
+.reward-skip-icon svg { width: 22px; height: 22px; }
+.reward-skip-copy h2 { margin: 1px 0 6px; color: #29392f; font: 700 17px/1.35 "Manrope",sans-serif; letter-spacing: -.2px; }
+.reward-skip-copy p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.reward-skip-actions { grid-column: 1 / -1; gap: 8px; margin-top: 8px; }
+.reward-skip-actions .button { min-height: 44px; font-size: 11px; }
+.button-danger { color: #fff; background: var(--red); }
+.button-danger:hover { background: #93312c; }
 .login-screen { display: grid; min-height: 100vh; padding: 20px; place-items: center; background: #f5f8f6; }
 .login-card { display: grid; width: min(100%,380px); gap: 10px; padding: 28px; border: 1px solid #e2e8e4; border-radius: 12px; background: #fff; box-shadow: 0 15px 50px rgba(27,43,35,.08); }
 .login-brand { color: #196a49; font: 800 20px "Manrope",sans-serif; letter-spacing: -1px; }
@@ -234,11 +259,17 @@ td { height: 51px; padding: 7px 13px; border-top: 1px solid #edf0ed; color: #596
 .app-dialog input, .app-dialog select, .app-dialog textarea { width: 100%; min-height: 38px; margin-bottom: 12px; padding: 8px 10px; border: 1px solid #dfe5e1; border-radius: 6px; color: #364239; background: #fff; font-size: 11px; }
 .app-dialog textarea { min-height: 55px; resize: vertical; }
 .app-dialog input::placeholder, .app-dialog textarea::placeholder { color: #606d64; }
+.fish-intake-unit-label { display: block; margin: 0 0 5px; color: #455249; font-size: 10px; font-weight: 700; }
 .field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .field-grid > div { min-width: 0; }
 .input-suffix { position: relative; }
 .input-suffix input { padding-right: 30px; }
 .input-suffix span { position: absolute; top: 10px; right: 10px; color: var(--muted); font-size: 10px; }
+.fish-intake-product-select { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: start; gap: 8px; }
+.fish-intake-product-select select { min-width: 0; }
+.app-dialog .fish-intake-product-select .link-button { min-height: 44px; padding: 0 4px; font-size: 10px; white-space: nowrap; }
+.fish-intake-unit { display: block; min-height: 38px; margin-bottom: 12px; padding: 10px; border: 1px solid #e4eae5; border-radius: 6px; color: #55645a; background: #f7faf8; font-size: 11px; }
+.fish-intake-size { display: block; margin-top: 3px; color: var(--muted); font-size: 9px; }
 .unit-create { display: grid; grid-template-columns: minmax(0,1fr) auto auto; align-items: end; gap: 7px; padding: 10px; border: 1px solid #e0e8e2; border-radius: 7px; background: #f7faf8; }
 .unit-create label { grid-column: 1 / -1; margin: 0; }
 .unit-create input { min-width: 0; margin: 0; }
@@ -255,6 +286,8 @@ td { height: 51px; padding: 7px 13px; border-top: 1px solid #edf0ed; color: #596
 .size-price-row label { display: block; }
 .size-price-row input { min-height: 36px; margin: 0; }
 .size-summary { color: #4d5b52; font-size: 9px; line-height: 1.6; }
+.size-column { display: grid; }
+.size-column > span { min-height: 14px; }
 .file-input { display: none !important; }
 .product-image-picker { display: flex; align-items: center; gap: 12px; margin: 0 0 12px; }
 .product-image-preview { display: grid; width: 76px; height: 76px; flex: 0 0 auto; overflow: hidden; place-items: center; border: 1px solid #e1e7e2; border-radius: 8px; background: #f5f8f5; }
@@ -376,7 +409,7 @@ td { height: 51px; padding: 7px 13px; border-top: 1px solid #edf0ed; color: #596
   .dashboard-grid { grid-template-columns: minmax(0,1fr); }
   .reward-row { align-items: flex-start; flex-wrap: wrap; }
   .reward-details { flex: 1 1 calc(100% - 50px); }
-  .reward-action { margin-left: 46px; }
+  .reward-actions { margin-left: 46px; }
   .privacy-reminder { align-items: flex-start; }
   .privacy-reminder button { white-space: nowrap; }
   .content-heading { padding-top: 22px; }

@@ -40,6 +40,31 @@ module.exports = async function handler(req, res) {
     await ensureSchema();
     const sql = getSql();
     if (req.method === "GET") {
+      if (req.query?.download === "1") {
+        const chunks = await sql`
+          SELECT image.content_type, image.chunk_count, chunk.chunk_index,
+            ENCODE(chunk.content, 'base64') AS content_base64
+          FROM fish_store_images AS image
+          LEFT JOIN fish_store_image_chunks AS chunk ON chunk.image_id = image.id
+          WHERE image.id = ${imageId}
+          ORDER BY chunk.chunk_index
+        `;
+        if (!chunks.length) return sendJson(res, 404, { error: "Image not found." });
+        const partCount = Number(chunks[0].chunk_count);
+        if (!Number.isInteger(partCount) || partCount < 1 || partCount > 3 ||
+            chunks.length !== partCount || chunks.some((chunk, index) => Number(chunk.chunk_index) !== index)) {
+          return sendJson(res, 409, { error: "Image upload is incomplete." });
+        }
+        const image = Buffer.concat(chunks.map((chunk) => Buffer.from(chunk.content_base64, "base64")));
+        if (!ALLOWED_TYPES.has(chunks[0].content_type) || !image.length || image.length > MAX_IMAGE_BYTES) {
+          return sendJson(res, 409, { error: "Image data is invalid." });
+        }
+        setNoStoreHeaders(res);
+        res.statusCode = 200;
+        res.setHeader("Content-Type", chunks[0].content_type);
+        res.setHeader("Content-Length", image.length);
+        return res.end(image);
+      }
       const rows = await sql`SELECT content_type, chunk_count FROM fish_store_images WHERE id = ${imageId}`;
       if (!rows.length) return sendJson(res, 404, { error: "Image not found." });
       if (req.query?.part === undefined) {

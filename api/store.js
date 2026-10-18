@@ -9,10 +9,14 @@ const {
 } = require("../lib/server");
 
 function validPayload(payload) {
-  return payload && typeof payload === "object" &&
+  const collections = ["products", "customers", "orders", "receipts", "fishRewards", "fishIntakes", "expenses", "units"];
+  return payload && typeof payload === "object" && !Array.isArray(payload) &&
     ["products", "customers", "orders", "receipts", "fishRewards"].every((key) => Array.isArray(payload[key])) &&
-    (payload.expenses === undefined || Array.isArray(payload.expenses)) &&
-    (payload.units === undefined || Array.isArray(payload.units));
+    collections.every((key) => payload[key] === undefined || (
+      Array.isArray(payload[key]) && payload[key].every((item) =>
+        key === "units" ? typeof item === "string" : item !== null && typeof item === "object" && !Array.isArray(item)
+      )
+    ));
 }
 
 module.exports = async function handler(req, res) {
@@ -26,9 +30,25 @@ module.exports = async function handler(req, res) {
     await ensureSchema();
     const sql = getSql();
     if (req.method === "GET") {
-      const rows = await sql`SELECT payload, revision FROM fish_store_data WHERE id = 'owner'`;
+      const rows = await sql`
+        SELECT
+          jsonb_build_object(
+            'products', COALESCE((SELECT jsonb_agg(payload ORDER BY position) FROM fish_store_products), '[]'::JSONB),
+            'customers', COALESCE((SELECT jsonb_agg(payload ORDER BY position) FROM fish_store_customers), '[]'::JSONB),
+            'orders', COALESCE((SELECT jsonb_agg(payload ORDER BY position) FROM fish_store_orders), '[]'::JSONB),
+            'receipts', COALESCE((SELECT jsonb_agg(payload ORDER BY position) FROM fish_store_receipts), '[]'::JSONB),
+            'fishIntakes', COALESCE((SELECT jsonb_agg(payload ORDER BY position) FROM fish_store_fish_intakes), '[]'::JSONB),
+            'expenses', COALESCE((SELECT jsonb_agg(payload ORDER BY position) FROM fish_store_expenses), '[]'::JSONB),
+            'fishRewards', COALESCE((SELECT jsonb_agg(payload ORDER BY position) FROM fish_store_fish_rewards), '[]'::JSONB),
+            'units', COALESCE((SELECT jsonb_agg(payload->'value' ORDER BY position) FROM fish_store_units), '[]'::JSONB)
+          ) AS payload,
+          revision,
+          has_data
+        FROM fish_store_store_state
+        WHERE id = 'owner'
+      `;
       return sendJson(res, 200, rows.length
-        ? { data: rows[0].payload, revision: Number(rows[0].revision) }
+        ? { data: rows[0].has_data ? rows[0].payload : null, revision: Number(rows[0].revision) }
         : { data: null, revision: 0 });
     }
 
@@ -38,14 +58,9 @@ module.exports = async function handler(req, res) {
     }
     const payload = JSON.stringify(body.data);
     const rows = await sql`
-      INSERT INTO fish_store_data (id, payload, revision)
-      VALUES ('owner', ${payload}::jsonb, 1)
-      ON CONFLICT (id) DO UPDATE
-      SET payload = EXCLUDED.payload, revision = fish_store_data.revision + 1, updated_at = NOW()
-      WHERE fish_store_data.revision = ${body.revision}
-      RETURNING revision
+      SELECT fish_store_replace_payload(${payload}::jsonb, ${body.revision}::bigint) AS revision
     `;
-    if (!rows.length) return sendJson(res, 409, { error: "Data changed on another device. Reload the app to get the latest copy before saving again." });
+    if (rows[0].revision === null) return sendJson(res, 409, { error: "Data changed on another device. Reload the app to get the latest copy before saving again." });
     return sendJson(res, 200, { revision: Number(rows[0].revision) });
   } catch (error) {
     console.error("Cloud store request failed.", error);

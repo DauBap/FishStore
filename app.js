@@ -1,7 +1,7 @@
 const KEY = "kho-moc.store.v1";
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
-const emptyData = { products: [], customers: [], orders: [], receipts: [], expenses: [], fishRewards: [], units: [] };
+const emptyData = { products: [], customers: [], orders: [], receipts: [], fishIntakes: [], expenses: [], fishRewards: [], units: [] };
 const localData = loadData();
 let data = structuredClone(emptyData);
 let cloudRevision = 0;
@@ -19,6 +19,7 @@ let imageDbPromise;
 let selectedProductImage = null;
 let clearProductImage = false;
 let productImagePreviewUrl = null;
+let creatingProductForFishIntake = false;
 const renderedImageUrls = new Set();
 
 function loadData() {
@@ -48,6 +49,7 @@ function normalizeData(stored) {
     customers: Array.isArray(stored.customers) ? stored.customers : [],
     orders: Array.isArray(stored.orders) ? stored.orders : [],
     receipts: Array.isArray(stored.receipts) ? stored.receipts : [],
+    fishIntakes: Array.isArray(stored.fishIntakes) ? stored.fishIntakes : [],
     expenses: Array.isArray(stored.expenses) ? stored.expenses : [],
     fishRewards: Array.isArray(stored.fishRewards) ? stored.fishRewards : [],
     units: [...new Map(units.map((unit) => [unit.toLocaleLowerCase(), unit])).values()],
@@ -106,22 +108,14 @@ async function storeProductImage(file, imageId = id()) {
 }
 
 async function getProductImage(imageId) {
-  const path = `/api/images/${encodeURIComponent(imageId)}`;
-  const metadataResponse = await fetch(path);
-  if (metadataResponse.status === 404) return null;
-  if (!metadataResponse.ok) throw new Error("Không thể tải hình ảnh từ cloud.");
-  const metadata = await metadataResponse.json();
-  if (!Number.isInteger(metadata.parts) || metadata.parts < 1 || metadata.parts > 3 ||
-      !["image/jpeg", "image/png", "image/webp"].includes(metadata.contentType)) {
+  const response = await fetch(`/api/images/${encodeURIComponent(imageId)}?download=1`);
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error("Không thể tải hình ảnh từ cloud.");
+  const contentType = response.headers.get("Content-Type");
+  if (!["image/jpeg", "image/png", "image/webp"].includes(contentType)) {
     throw new Error("Thông tin hình ảnh trên cloud không hợp lệ.");
   }
-  const chunks = [];
-  for (let part = 0; part < metadata.parts; part += 1) {
-    const response = await fetch(`${path}?part=${part}`);
-    if (!response.ok) throw new Error("Không thể tải đầy đủ hình ảnh từ cloud.");
-    chunks.push(await response.blob());
-  }
-  const image = new Blob(chunks, { type: metadata.contentType });
+  const image = await response.blob();
   if (image.size > 8 * 1024 * 1024) throw new Error("Hình ảnh trên cloud vượt quá giới hạn 8 MB.");
   return image;
 }
@@ -149,36 +143,42 @@ function clearRenderedImages() {
 }
 
 async function hydrateProductImages(container, products) {
-  for (const product of products) {
-    if (!product.imageId) continue;
-    try {
-      const blob = await getProductImage(product.imageId);
-      if (!blob || !container.isConnected) continue;
-      const placeholder = $(`[data-product-image="${CSS.escape(product.id)}"]`, container);
-      if (!placeholder) continue;
-      const image = document.createElement("img");
-      image.src = URL.createObjectURL(blob);
-      image.alt = product.name;
-      renderedImageUrls.add(image.src);
-      placeholder.replaceChildren(image);
-      placeholder.classList.add("has-image");
-    } catch (error) {
-      console.error(`Unable to load image for product ${product.id}.`, error);
-      toast(`Không tải được hình ảnh của "${product.name}".`, true);
+  const imageProducts = products.filter((product) => product.imageId);
+  let nextIndex = 0;
+  const loadNext = async () => {
+    while (nextIndex < imageProducts.length) {
+      const product = imageProducts[nextIndex];
+      nextIndex += 1;
+      try {
+        const blob = await getProductImage(product.imageId);
+        if (!blob || !container.isConnected) continue;
+        const placeholder = $(`[data-product-image="${CSS.escape(product.id)}"]`, container);
+        if (!placeholder) continue;
+        const image = document.createElement("img");
+        image.src = URL.createObjectURL(blob);
+        image.alt = product.name;
+        renderedImageUrls.add(image.src);
+        placeholder.replaceChildren(image);
+        placeholder.classList.add("has-image");
+      } catch (error) {
+        console.error(`Unable to load image for product ${product.id}.`, error);
+        toast(`Không tải được hình ảnh của "${product.name}".`, true);
+      }
     }
-  }
+  };
+  await Promise.all(Array.from({ length: Math.min(4, imageProducts.length) }, () => loadNext()));
 }
 
-function persist() {
+function persist({ quiet = false } = {}) {
   const snapshot = structuredClone(data);
-  const operation = cloudSaveQueue.then(() => persistSnapshot(snapshot), () => persistSnapshot(snapshot));
+  const operation = cloudSaveQueue.then(() => persistSnapshot(snapshot, quiet), () => persistSnapshot(snapshot, quiet));
   pendingCloudWrites += 1;
   const trackedOperation = operation.finally(() => { pendingCloudWrites -= 1; });
   cloudSaveQueue = trackedOperation.then(() => undefined, () => undefined);
   return trackedOperation;
 }
 
-async function persistSnapshot(snapshot) {
+async function persistSnapshot(snapshot, quiet = false) {
   try {
     const response = await fetch("/api/store", {
       method: "PUT",
@@ -195,7 +195,7 @@ async function persistSnapshot(snapshot) {
     return true;
   } catch (error) {
     console.error("Could not save cloud data.", error);
-    toast(error.message || "Không thể đồng bộ dữ liệu. Kiểm tra kết nối rồi thử lại.", true);
+    if (!quiet) toast(error.message || "Không thể đồng bộ dữ liệu. Kiểm tra kết nối rồi thử lại.", true);
     return false;
   }
 }
@@ -236,6 +236,9 @@ function escapeText(value = "") {
 function initials(value = "") {
   return value.trim().split(/\s+/).slice(-2).map((part) => part.charAt(0)).join("").toUpperCase() || "?";
 }
+function sortSizes(sizes) {
+  return [...sizes].sort((left, right) => left.label.localeCompare(right.label, "vi", { numeric: true, sensitivity: "base" }));
+}
 function toast(message, error = false) {
   const item = document.createElement("div");
   item.className = `toast${error ? " toast-error" : ""}`;
@@ -256,8 +259,29 @@ function closeDialog(dialog) {
     selectedProductImage = null;
   }
 }
+function confirmSkipFishReward() {
+  const dialog = $("#reward-skip-dialog");
+  dialog.returnValue = "";
+  return new Promise((resolve) => {
+    dialog.addEventListener("close", () => resolve(dialog.returnValue === "skip"), { once: true });
+    openDialog(dialog);
+  });
+}
+function confirmDeleteGiftedReward(reward, customerName) {
+  const dialog = $("#reward-delete-dialog");
+  $("#reward-delete-description").textContent = `Xóa lần ghi nhận đã tặng cho ${customerName} tại mốc ${number(reward.milestone * 10)} con? Nếu khách vẫn đủ mốc, lượt quà sẽ trở lại danh sách cần tặng.`;
+  dialog.returnValue = "";
+  return new Promise((resolve) => {
+    dialog.addEventListener("close", () => resolve(dialog.returnValue === "delete"), { once: true });
+    openDialog(dialog);
+  });
+}
 
-function customerFor(order) { return data.customers.find((customer) => customer.id === order.customerId); }
+function customerFor(order) {
+  return data.customers.find((customer) => customer.id === order.customerId) || (order.customerName || order.customerPhone
+    ? { name: order.customerName || "", phone: order.customerPhone || "", social: "" }
+    : undefined);
+}
 function orderTotal(order) { return order.lines.reduce((total, line) => total + line.quantity * line.price, 0); }
 function lineCostInfo(line) {
   if (typeof line.costPrice === "number" && Number.isFinite(line.costPrice)) {
@@ -338,6 +362,36 @@ async function markFishRewardGifted(rewardId) {
   const customer = data.customers.find((item) => item.id === reward.customerId);
   toast(`Đã ghi nhận tặng cá cho ${customer?.name || "khách hàng"} tại mốc ${reward.milestone * 10} con.`);
 }
+async function skipFishReward(rewardId) {
+  const reward = data.fishRewards.find((item) => item.id === rewardId && item.status === "pending");
+  if (!reward || !await confirmSkipFishReward()) return;
+  const previousData = data;
+  data = {
+    ...data,
+    fishRewards: data.fishRewards.map((item) => item.id === rewardId ? { ...item, status: "skipped", skippedAt: new Date().toISOString() } : item),
+  };
+  if (!await persist()) { data = previousData; return; }
+  renderCurrentView();
+  const customer = data.customers.find((item) => item.id === reward.customerId);
+  toast(`Đã bỏ qua vĩnh viễn lượt quà tại mốc ${reward.milestone * 10} con cho ${customer?.name || "khách hàng"}.`);
+}
+async function deleteGiftedFishReward(rewardId) {
+  const reward = data.fishRewards.find((item) => item.id === rewardId && item.status === "gifted");
+  if (!reward) return;
+  const customer = data.customers.find((item) => item.id === reward.customerId);
+  if (!await confirmDeleteGiftedReward(reward, customer?.name || "khách hàng")) return;
+  const previousData = data;
+  const remainingRewards = data.fishRewards.filter((item) => item.id !== rewardId);
+  data = { ...data, fishRewards: remainingRewards };
+  const result = reconcileFishRewards(reward.customerId, reward.sourceOrderId || "");
+  data = { ...data, fishRewards: result.rewards };
+  if (!await persist()) { data = previousData; return; }
+  renderCurrentView();
+  renderRewardHistory();
+  toast(result.newlyPending
+    ? `Đã xóa lần ghi nhận; ${number(result.newlyPending)} lượt quà đã trở lại danh sách cần tặng.`
+    : "Đã xóa lần ghi nhận tặng cá.");
+}
 async function initializeFishRewards() {
   const previousRewards = data.fishRewards;
   let rewards = [...previousRewards];
@@ -361,6 +415,7 @@ function unitsSold(customerId) {
 function renderCounts() {
   $("#order-count").textContent = number(data.orders.length);
   $("#receiving-count").textContent = number(data.receipts.length);
+  $("#fish-intake-count").textContent = number(data.fishIntakes.length);
   $("#expense-count").textContent = number(data.expenses.length);
   $("#reward-count").textContent = number(pendingFishRewards().length);
   $("#gifted-fish-count").textContent = number(data.fishRewards.filter((reward) => reward.status === "gifted").length);
@@ -382,7 +437,7 @@ function renderOverview() {
   } else {
     recent.innerHTML = `<div class="table-wrap"><table><thead><tr><th>MÃ ĐƠN</th><th>KHÁCH HÀNG</th><th>NGÀY TẠO</th><th>TỔNG TIỀN</th></tr></thead><tbody>${latest.map((order) => {
       const customer = customerFor(order);
-      return `<tr><td><button class="order-link" data-order="${order.id}">#${escapeText(order.number)}</button></td><td>${escapeText(customer?.name || "Khách đã xóa")}</td><td>${dateLabel(order.createdAt)}</td><td class="amount-cell">${money(orderTotal(order))}</td></tr>`;
+      return `<tr><td><button class="order-link" data-order="${order.id}">#${escapeText(order.number)}</button></td><td>${escapeText(customer?.name || (order.customerId ? "Khách đã xóa" : "Khách lẻ"))}</td><td>${dateLabel(order.createdAt)}</td><td class="amount-cell">${money(orderTotal(order))}</td></tr>`;
     }).join("")}</tbody></table></div>`;
     $$("[data-order]", recent).forEach((button) => button.addEventListener("click", () => showView("orders")));
   }
@@ -410,9 +465,27 @@ function renderFishRewards() {
   container.innerHTML = `<div class="reward-summary">${number(rewards.length)} con cá tặng đang chờ · ${number(customerIds.length)} khách</div><div class="reward-list">${rewards.map((reward) => {
     const customer = data.customers.find((item) => item.id === reward.customerId);
     const count = fishBought(reward.customerId);
-    return `<div class="reward-row"><span class="reward-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M20 12v8H4v-8m-2-5h20v5H2zm10 0v13m0-13H7.5a2.5 2.5 0 1 1 2.3-3.5L12 7m0 0h4.5a2.5 2.5 0 1 0-2.3-3.5L12 7"/></svg></span><span class="reward-details"><strong>${escapeText(customer?.name || "Khách hàng đã xóa")} · ${escapeText(customer?.phone || "Không có số điện thoại")}</strong><small>Đã mua ${number(count)} con cá · Mốc ${number(reward.milestone * 10)} con · Tặng 1 con</small></span><button type="button" class="button button-secondary reward-action" data-gift-reward="${escapeText(reward.id)}">Đã tặng</button></div>`;
+    return `<div class="reward-row"><span class="reward-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M20 12v8H4v-8m-2-5h20v5H2zm10 0v13m0-13H7.5a2.5 2.5 0 1 1 2.3-3.5L12 7m0 0h4.5a2.5 2.5 0 1 0-2.3-3.5L12 7"/></svg></span><span class="reward-details"><strong>${escapeText(customer?.name || "Khách hàng đã xóa")} · ${escapeText(customer?.phone || "Không có số điện thoại")}</strong><small>Đã mua ${number(count)} con cá · Mốc ${number(reward.milestone * 10)} con · Tặng 1 con</small></span><div class="reward-actions"><button type="button" class="button button-secondary reward-action" data-gift-reward="${escapeText(reward.id)}">Đã tặng</button><button type="button" class="button button-secondary reward-action reward-skip-action" data-skip-reward="${escapeText(reward.id)}">Không tặng</button></div></div>`;
   }).join("")}</div>`;
   $$("[data-gift-reward]", container).forEach((button) => button.addEventListener("click", () => markFishRewardGifted(button.dataset.giftReward)));
+  $$("[data-skip-reward]", container).forEach((button) => button.addEventListener("click", () => skipFishReward(button.dataset.skipReward)));
+}
+
+function renderRewardHistory() {
+  const container = $("#reward-history-list");
+  const processed = data.fishRewards.filter((reward) => reward.status === "gifted" || reward.status === "skipped")
+    .sort((a, b) => (b.giftedAt || b.skippedAt || b.createdAt || "").localeCompare(a.giftedAt || a.skippedAt || a.createdAt || ""));
+  if (!processed.length) {
+    container.innerHTML = '<div class="empty-inline"><strong>Chưa có lịch sử quà tặng</strong><span>Các mốc đã tặng hoặc chọn không tặng sẽ xuất hiện tại đây.</span></div>';
+    return;
+  }
+  container.innerHTML = `<div class="reward-history-list">${processed.map((reward) => {
+    const customer = data.customers.find((item) => item.id === reward.customerId);
+    const gifted = reward.status === "gifted";
+    const handledAt = reward.giftedAt || reward.skippedAt || reward.createdAt;
+    return `<article class="reward-history-row"><span class="reward-history-status ${gifted ? "is-gifted" : "is-skipped"}">${gifted ? "Đã tặng" : "Không tặng"}</span><span class="reward-history-details"><strong>${escapeText(customer?.name || "Khách hàng đã xóa")}</strong><small>Mốc ${number(reward.milestone * 10)} con · ${dateLabel(handledAt)}</small></span>${gifted ? `<button type="button" class="row-action row-danger reward-history-delete" data-delete-gifted-reward="${escapeText(reward.id)}" aria-label="Xóa lần ghi nhận đã tặng cho ${escapeText(customer?.name || "khách hàng")} tại mốc ${number(reward.milestone * 10)} con">Xóa</button>` : ""}</article>`;
+  }).join("")}</div>`;
+  $$("[data-delete-gifted-reward]", container).forEach((button) => button.addEventListener("click", () => deleteGiftedFishReward(button.dataset.deleteGiftedReward)));
 }
 
 function pageHeading(tag, title, description, buttonText, buttonId) {
@@ -441,10 +514,15 @@ function renderProducts(query = "") {
     if (action) action.addEventListener("click", () => openProductDialog());
     return;
   }
-  container.innerHTML = `<div class="panel table-panel"><div class="table-wrap"><table><thead><tr><th>SẢN PHẨM</th><th>MÃ HÀNG</th><th>ĐƠN VỊ</th><th>GIÁ MUA MẶC ĐỊNH</th><th>SIZE · GIÁ BÁN · GIÁ MUA</th><th></th></tr></thead><tbody>${filtered.map((product) => {
-    const sizes = Array.isArray(product.sizes) ? product.sizes : [];
-    const sizeSummary = sizes.length ? sizes.map((size) => `${escapeText(size.label)}: bán ${money(size.price)} · mua ${typeof size.costPrice === "number" || typeof product.costPrice === "number" ? money(size.costPrice ?? product.costPrice) : "chưa cài"}`).join("<br>") : "—";
-    return `<tr><td><div class="product-cell"><span class="product-thumb" data-product-image="${escapeText(product.id)}">${escapeText(initials(product.name))}</span><span><strong>${escapeText(product.name)}</strong><small>${escapeText(product.description || "—")}</small></span></div></td><td>${escapeText(product.sku || "—")}</td><td>${escapeText(product.unit || "cái")}</td><td class="amount-cell">${product.costPrice == null ? "—" : money(product.costPrice)}</td><td class="size-summary">${sizeSummary}</td><td><div class="row-actions"><button data-edit-product="${product.id}" class="row-action">Sửa</button><button data-delete-product="${product.id}" class="row-action row-danger">Xóa</button></div></td></tr>`;
+  container.innerHTML = `<div class="panel table-panel"><div class="table-wrap"><table class="products-table"><thead><tr><th>SẢN PHẨM</th><th>MÃ HÀNG</th><th>ĐƠN VỊ</th><th>GIÁ MUA MẶC ĐỊNH</th><th>SIZE</th><th>GIÁ MUA</th><th>GIÁ BÁN</th><th></th></tr></thead><tbody>${filtered.map((product) => {
+    const sizes = sortSizes(Array.isArray(product.sizes) ? product.sizes : []);
+    const sizeValues = (getValue) => sizes.length
+      ? `<div class="size-column">${sizes.map((size) => `<span>${escapeText(getValue(size))}</span>`).join("")}</div>`
+      : "—";
+    const sizeLabels = sizeValues((size) => size.label);
+    const sizeCosts = sizeValues((size) => typeof size.costPrice === "number" || typeof product.costPrice === "number" ? money(size.costPrice ?? product.costPrice) : "—");
+    const sizePrices = sizeValues((size) => typeof size.price === "number" ? money(size.price) : "—");
+    return `<tr><td><div class="product-cell"><span class="product-thumb" data-product-image="${escapeText(product.id)}">${escapeText(initials(product.name))}</span><span><strong>${escapeText(product.name)}</strong><small>${escapeText(product.description || "—")}</small></span></div></td><td>${escapeText(product.sku || "—")}</td><td>${escapeText(product.unit || "cái")}</td><td class="amount-cell">${product.costPrice == null ? "—" : money(product.costPrice)}</td><td class="size-summary">${sizeLabels}</td><td class="size-summary">${sizeCosts}</td><td class="size-summary">${sizePrices}</td><td><div class="row-actions"><button data-edit-product="${product.id}" class="row-action">Sửa</button><button data-delete-product="${product.id}" class="row-action row-danger">Xóa</button></div></td></tr>`;
   }).join("")}</tbody></table></div><div class="table-footer">Hiển thị ${number(filtered.length)} / ${number(data.products.length)} sản phẩm</div></div>`;
   hydrateProductImages(container, filtered);
   $$("[data-edit-product]").forEach((button) => button.addEventListener("click", () => openProductDialog(button.dataset.editProduct)));
@@ -472,7 +550,7 @@ function renderOrders(query = "") {
   container.innerHTML = `<div class="panel table-panel"><div class="table-wrap"><table><thead><tr><th>MÃ ĐƠN</th><th>KHÁCH HÀNG</th><th>NGÀY TẠO</th><th>MẶT HÀNG</th><th>TỔNG TIỀN</th><th></th></tr></thead><tbody>${filtered.map((order) => {
     const customer = customerFor(order);
     const itemSummary = order.lines.map((line) => `${line.name}${line.size ? ` · ${line.size}` : ""} × ${number(line.quantity)} ${line.unit || ""}`).join(", ");
-    return `<tr><td><strong class="order-number">#${escapeText(order.number)}</strong></td><td><div class="customer-cell"><span class="customer-avatar">${escapeText(initials(customer?.name || "?"))}</span><span><strong>${escapeText(customer?.name || "Khách đã xóa")}</strong><small>${escapeText(customer?.phone || "")}</small></span></div></td><td>${dateLabel(order.createdAt)}</td><td class="receipt-item-summary">${escapeText(itemSummary)}</td><td class="amount-cell">${money(orderTotal(order))}</td><td><button class="row-action row-danger" data-delete-order="${order.id}">Xóa</button></td></tr>`;
+    return `<tr><td><strong class="order-number">#${escapeText(order.number)}</strong></td><td><div class="customer-cell"><span class="customer-avatar">${escapeText(initials(customer?.name || "?"))}</span><span><strong>${escapeText(customer?.name || (order.customerId ? "Khách đã xóa" : "Khách lẻ"))}</strong><small>${escapeText(customer?.phone || "")}</small></span></div></td><td>${dateLabel(order.createdAt)}</td><td class="receipt-item-summary">${escapeText(itemSummary)}</td><td class="amount-cell">${money(orderTotal(order))}</td><td><button class="row-action row-danger" data-delete-order="${order.id}">Xóa</button></td></tr>`;
   }).join("")}</tbody></table></div><div class="table-footer">Hiển thị ${number(filtered.length)} / ${number(data.orders.length)} đơn hàng</div></div>`;
   $$("[data-delete-order]").forEach((button) => button.addEventListener("click", () => deleteOrder(button.dataset.deleteOrder)));
 }
@@ -533,13 +611,14 @@ function renderCustomers(query = "") {
     if (action) action.addEventListener("click", () => openCustomerDialog());
     return;
   }
-  container.innerHTML = `<div class="panel table-panel"><div class="table-wrap"><table><thead><tr><th>KHÁCH HÀNG</th><th>SỐ ĐIỆN THOẠI</th><th>MẠNG XÃ HỘI</th><th>SỐ ĐƠN</th><th>SẢN PHẨM ĐÃ MUA</th><th>CÁ ĐÃ MUA</th><th>QUÀ TẶNG</th><th>TỔNG CHI TIÊU</th><th></th></tr></thead><tbody>${filtered.map((customer) => {
+  container.innerHTML = `<div class="panel table-panel"><div class="table-wrap"><table><thead><tr><th>KHÁCH HÀNG</th><th>SỐ ĐIỆN THOẠI</th><th>MẠNG XÃ HỘI</th><th>SỐ ĐƠN</th><th>SẢN PHẨM ĐÃ MUA</th><th>CÁ ĐÃ MUA</th><th>CÁ ĐÃ TẶNG</th><th>QUÀ TẶNG</th><th>TỔNG CHI TIÊU</th><th></th></tr></thead><tbody>${filtered.map((customer) => {
     const customerOrders = data.orders.filter((order) => order.customerId === customer.id && order.status !== "cancelled");
     const items = unitsSold(customer.id);
     const fishCount = fishBought(customer.id);
+    const giftedFishCount = data.fishRewards.filter((reward) => reward.customerId === customer.id && reward.status === "gifted").length;
     const pendingGifts = pendingFishRewards(customer.id).length;
     const spent = customerOrders.reduce((sum, order) => sum + orderTotal(order), 0);
-    return `<tr><td><div class="customer-cell"><span class="customer-avatar">${escapeText(initials(customer.name))}</span><span><strong>${escapeText(customer.name)}</strong><small>Khách từ ${dateLabel(customer.createdAt)}</small></span></div></td><td><a class="phone-link" href="tel:${escapeText(customer.phone)}">${escapeText(customer.phone)}</a></td><td>${customer.social ? `<a class="social-link" href="${escapeText(customer.social)}" target="_blank" rel="noopener noreferrer">Mở trang cá nhân ↗</a>` : '<span class="muted-cell">Chưa cập nhật</span>'}</td><td>${number(customerOrders.length)}</td><td><strong>${number(items)}</strong> đơn vị</td><td><strong>${number(fishCount)}</strong> con</td><td>${pendingGifts ? `<strong class="reward-pending">${number(pendingGifts)} con cần tặng</strong>` : '<span class="muted-cell">Chưa đến mốc</span>'}</td><td class="amount-cell">${money(spent)}</td><td><div class="row-actions"><button class="row-action" data-edit-customer="${customer.id}">Sửa</button><button class="row-action row-danger" data-delete-customer="${customer.id}">Xóa</button></div></td></tr>`;
+    return `<tr><td><div class="customer-cell"><span class="customer-avatar">${escapeText(initials(customer.name))}</span><span><strong>${escapeText(customer.name)}</strong><small>Khách từ ${dateLabel(customer.createdAt)}</small></span></div></td><td><a class="phone-link" href="tel:${escapeText(customer.phone)}">${escapeText(customer.phone)}</a></td><td>${customer.social ? `<a class="social-link" href="${escapeText(customer.social)}" target="_blank" rel="noopener noreferrer">Mở trang cá nhân ↗</a>` : '<span class="muted-cell">Chưa cập nhật</span>'}</td><td>${number(customerOrders.length)}</td><td><strong>${number(items)}</strong> đơn vị</td><td><strong>${number(fishCount)}</strong> con</td><td><strong>${number(giftedFishCount)}</strong> con</td><td>${pendingGifts ? `<strong class="reward-pending">${number(pendingGifts)} con cần tặng</strong>` : '<span class="muted-cell">Chưa đến mốc</span>'}</td><td class="amount-cell">${money(spent)}</td><td><div class="row-actions"><button class="row-action" data-edit-customer="${customer.id}">Sửa</button><button class="row-action row-danger" data-delete-customer="${customer.id}">Xóa</button></div></td></tr>`;
   }).join("")}</tbody></table></div><div class="table-footer">Hiển thị ${number(filtered.length)} / ${number(data.customers.length)} khách hàng</div></div>`;
   $$("[data-edit-customer]").forEach((button) => button.addEventListener("click", () => openCustomerDialog(button.dataset.editCustomer)));
   $$("[data-delete-customer]").forEach((button) => button.addEventListener("click", () => deleteCustomer(button.dataset.deleteCustomer)));
@@ -566,6 +645,124 @@ function renderReceipts(query = "") {
     const total = receipt.lines.reduce((sum, line) => sum + line.quantity * line.unitCost, 0);
     return `<tr><td>${dateLabel(`${receipt.date}T00:00:00`)}</td><td class="receipt-item-summary">${escapeText(itemSummary)}</td><td>${escapeText(receipt.supplier || "—")}</td><td>${escapeText(receipt.note || "—")}</td><td class="amount-cell">${money(total)}</td></tr>`;
   }).join("")}</tbody></table></div><div class="table-footer">Hiển thị ${number(filtered.length)} / ${number(data.receipts.length)} phiếu nhập</div></div>`;
+}
+
+function renderFishIntakeProducts(selectedId = "") {
+  const select = $("#fish-intake-product");
+  select.replaceChildren(new Option("Chọn sản phẩm trong danh mục", ""));
+  data.products.forEach((product) => select.add(new Option(product.name, product.id)));
+  select.value = selectedId;
+  updateFishIntakeProduct();
+}
+
+function updateFishIntakeProduct() {
+  const product = data.products.find((item) => item.id === $("#fish-intake-product").value);
+  const sizes = sortSizes(Array.isArray(product?.sizes) ? product.sizes : []);
+  const sizeField = $("#fish-intake-size-field");
+  const sizeSelect = $("#fish-intake-size");
+  sizeField.hidden = !sizes.length;
+  sizeSelect.replaceChildren(new Option("Chọn size (không bắt buộc)", ""));
+  sizes.forEach((size) => sizeSelect.add(new Option(size.label, size.label)));
+  $("#fish-intake-unit").textContent = product?.unit || "—";
+  updateFishIntakeCost();
+}
+
+function updateFishIntakeCost() {
+  const product = data.products.find((item) => item.id === $("#fish-intake-product").value);
+  const sizeLabel = $("#fish-intake-size").value;
+  const size = product?.sizes?.find((item) => item.label === sizeLabel);
+  const unitCost = size?.costPrice ?? product?.costPrice;
+  const input = $("#fish-intake-unit-cost");
+  input.value = unitCost == null ? "" : unitCost;
+  formatPriceInput(input);
+}
+
+function fishIntakeTotal(intake) {
+  return intake.quantity * intake.unitCost + (Number.isFinite(intake.otherCost) ? intake.otherCost : 0);
+}
+
+function openFishIntakeDialog() {
+  $("#fish-intake-form").reset();
+  clearDialogError("fish-intake-error");
+  $("#fish-intake-date").value = new Date().toISOString().slice(0, 10);
+  $("#fish-intake-quantity").value = "1";
+  renderFishIntakeProducts();
+  openDialog($("#fish-intake-dialog"));
+}
+
+function renderFishIntakes(query = "") {
+  const panel = $("#fish-intakes-view");
+  const filtered = data.fishIntakes.filter((intake) =>
+    `${intake.productName} ${intake.size || ""} ${intake.supplier || ""} ${intake.note || ""}`.toLocaleLowerCase().includes(query.toLocaleLowerCase()))
+    .sort((a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt));
+  const totalCost = data.fishIntakes.reduce((sum, intake) => sum + fishIntakeTotal(intake), 0);
+  panel.innerHTML = `${pageHeading("NHẬP HÀNG", "Nhập cá", "Ghi lịch sử cá nhập và chi phí mua; thông tin sản phẩm lấy từ danh mục. Phiếu nhập không thay đổi tồn kho.", "Ghi phiếu nhập", "add-fish-intake-button")}
+    <div class="expense-summary"><article class="expense-summary-card"><span>Số phiếu nhập</span><strong>${number(data.fishIntakes.length)}</strong></article><article class="expense-summary-card"><span>Tổng chi phí đã ghi</span><strong>${money(totalCost)}</strong></article></div>
+    ${searchToolbar("Tìm cá, nhà cung cấp hoặc ghi chú...")}<div id="fish-intakes-content"></div>`;
+  $("#add-fish-intake-button").addEventListener("click", openFishIntakeDialog);
+  $("#view-search").value = query;
+  $("#view-search").addEventListener("input", (event) => renderFishIntakes(event.target.value));
+  $("#view-search-count").textContent = `${number(filtered.length)} phiếu`;
+  const container = $("#fish-intakes-content");
+  if (!filtered.length) {
+    container.innerHTML = emptyState('<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12c2.5-3.5 5.5-5 9-5s6.5 1.5 9 5c-2.5 3.5-5.5 5-9 5s-6.5-1.5-9-5Z"/><path d="m3 12-2-3v6l2-3Z"/></svg>', query ? "Không tìm thấy phiếu nhập cá" : "Chưa có lịch sử nhập cá", query ? "Thử tìm theo tên cá hoặc nhà cung cấp khác." : "Tạo phiếu nhập để lưu số lượng và chi phí mua.", query ? "" : "Ghi phiếu nhập", openFishIntakeDialog);
+    const action = $("[data-empty-action]", container);
+    if (action) action.addEventListener("click", openFishIntakeDialog);
+    return;
+  }
+  container.innerHTML = `<div class="panel table-panel"><div class="table-wrap"><table><thead><tr><th>NGÀY NHẬP</th><th>CÁ / SẢN PHẨM</th><th>SỐ LƯỢNG</th><th>GIÁ / ĐƠN VỊ</th><th>NHÀ CUNG CẤP</th><th>GHI CHÚ</th><th>CHI PHÍ KHÁC</th><th>TỔNG CHI PHÍ</th><th></th></tr></thead><tbody>${filtered.map((intake) => `<tr><td>${dateLabel(`${intake.date}T00:00:00`)}</td><td>${escapeText(intake.productName)}${intake.size ? `<small class="fish-intake-size">${escapeText(intake.size)}</small>` : ""}</td><td>${number(intake.quantity)} ${escapeText(intake.unit || "")}</td><td>${money(intake.unitCost)}</td><td>${escapeText(intake.supplier || "—")}</td><td>${escapeText(intake.note || "—")}</td><td>${money(intake.otherCost || 0)}</td><td class="amount-cell">${money(fishIntakeTotal(intake))}</td><td><button class="row-action row-danger" data-delete-fish-intake="${escapeText(intake.id)}">Xóa</button></td></tr>`).join("")}</tbody></table></div><div class="table-footer">Hiển thị ${number(filtered.length)} / ${number(data.fishIntakes.length)} phiếu nhập</div></div>`;
+  $$("[data-delete-fish-intake]").forEach((button) => button.addEventListener("click", () => deleteFishIntake(button.dataset.deleteFishIntake)));
+}
+
+async function createFishIntake(event) {
+  event.preventDefault();
+  const product = data.products.find((item) => item.id === $("#fish-intake-product").value);
+  const quantityValue = $("#fish-intake-quantity").value.trim();
+  const quantity = quantityValue ? Number(quantityValue) : 1;
+  const unitCostValue = $("#fish-intake-unit-cost").value.trim();
+  const unitCost = unitCostValue ? parsePrice(unitCostValue) : 0;
+  const otherCostValue = $("#fish-intake-other-cost").value.trim();
+  const otherCost = otherCostValue ? parsePrice(otherCostValue) : 0;
+  if (!product) {
+    showDialogError("fish-intake-error", "Chọn sản phẩm trong danh mục hoặc tạo sản phẩm mới.");
+    $("#fish-intake-product").focus();
+    return;
+  }
+  if (!Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(unitCost) || unitCost < 0 || !Number.isSafeInteger(otherCost) || otherCost < 0) {
+    showDialogError("fish-intake-error", "Số lượng phải lớn hơn 0; giá mua và chi phí khác nếu nhập phải là số hợp lệ từ 0 trở lên.");
+    return;
+  }
+  const createdAt = new Date().toISOString();
+  const intake = {
+    id: id(),
+    productId: product.id,
+    productName: product.name,
+    size: $("#fish-intake-size").value,
+    unit: product.unit || "",
+    quantity,
+    unitCost,
+    otherCost,
+    date: $("#fish-intake-date").value || createdAt.slice(0, 10),
+    supplier: $("#fish-intake-supplier").value.trim(),
+    note: $("#fish-intake-note").value.trim(),
+    createdAt,
+  };
+  const previousData = data;
+  data = { ...data, fishIntakes: [intake, ...data.fishIntakes] };
+  if (!await persist()) { data = previousData; return; }
+  closeDialog($("#fish-intake-dialog"));
+  renderCurrentView();
+  toast("Đã lưu phiếu nhập cá. Tồn kho không thay đổi.");
+}
+
+async function deleteFishIntake(intakeId) {
+  const intake = data.fishIntakes.find((item) => item.id === intakeId);
+  if (!intake || !window.confirm(`Xóa phiếu nhập cá “${intake.productName}”?`)) return;
+  const previousData = data;
+  data = { ...data, fishIntakes: data.fishIntakes.filter((item) => item.id !== intakeId) };
+  if (!await persist()) { data = previousData; return; }
+  renderCurrentView();
+  toast("Đã xóa phiếu nhập cá.");
 }
 
 function renderExpenses(query = "") {
@@ -612,17 +809,20 @@ function openExpenseDialog() {
 
 async function createExpense(event) {
   event.preventDefault();
-  const amount = parsePrice($("#expense-amount").value);
+  const amountValue = $("#expense-amount").value.trim();
+  const amount = amountValue ? parsePrice(amountValue) : 0;
+  const name = $("#expense-name").value.trim();
+  const note = $("#expense-note").value.trim();
   const expense = {
     id: id(),
-    date: $("#expense-date").value,
-    name: $("#expense-name").value.trim(),
+    date: $("#expense-date").value || new Date().toISOString().slice(0, 10),
+    name,
     amount,
-    note: $("#expense-note").value.trim(),
+    note,
     createdAt: new Date().toISOString(),
   };
-  if (!expense.date || !expense.name || !Number.isSafeInteger(expense.amount) || expense.amount <= 0) {
-    showDialogError("expense-error", "Nhập ngày chi, tên khoản chi và số tiền lớn hơn 0.");
+  if (!Number.isSafeInteger(expense.amount) || expense.amount < 0 || (!name && !note && !amountValue)) {
+    showDialogError("expense-error", "Nhập ít nhất tên khoản chi, ghi chú hoặc số tiền.");
     return;
   }
   const previousData = data;
@@ -664,7 +864,6 @@ function addReceiptLine() {
   name.setAttribute("list", "receipt-product-options");
   name.setAttribute("aria-label", "Tên vật tư");
   name.placeholder = "Tên vật tư";
-  name.required = true;
   const list = document.createElement("datalist");
   list.id = `receipt-product-options-${receiptLineId}`;
   name.setAttribute("list", list.id);
@@ -681,11 +880,9 @@ function addReceiptLine() {
   quantity.min = "0.01";
   quantity.step = "any";
   quantity.value = "1";
-  quantity.required = true;
   quantity.setAttribute("aria-label", "Số lượng nhập");
   const unitCost = document.createElement("input");
   unitCost.className = "receipt-item-cost";
-  unitCost.required = true;
   unitCost.placeholder = "Đơn giá";
   unitCost.setAttribute("aria-label", "Đơn giá mua");
   addPriceInput(unitCost);
@@ -725,21 +922,23 @@ async function createReceipt(event) {
   const lines = $$(".receipt-line", $("#receipt-lines")).map((row) => {
     const name = $(".receipt-item-name", row).value.trim();
     const product = data.products.find((item) => item.name.toLocaleLowerCase() === name.toLocaleLowerCase());
+    const quantityValue = $(".receipt-item-quantity", row).value.trim();
+    const costValue = $(".receipt-item-cost", row).value.trim();
     return {
       productId: product?.id || "",
       name,
       unit: $(".receipt-item-unit", row).value.trim() || product?.unit || "",
-      quantity: Number($(".receipt-item-quantity", row).value),
-      unitCost: parsePrice($(".receipt-item-cost", row).value),
+      quantity: quantityValue ? Number(quantityValue) : 1,
+      unitCost: costValue ? parsePrice(costValue) : 0,
     };
-  });
-  if (!lines.length || lines.some((line) => !line.name || !Number.isFinite(line.quantity) || line.quantity <= 0 || !Number.isFinite(line.unitCost) || line.unitCost < 0)) {
-    showDialogError("receipt-error", "Nhập tên vật tư, số lượng lớn hơn 0 và đơn giá hợp lệ cho từng dòng.");
+  }).filter((line) => line.name);
+  if (!lines.length || lines.some((line) => !Number.isFinite(line.quantity) || line.quantity <= 0 || !Number.isFinite(line.unitCost) || line.unitCost < 0)) {
+    showDialogError("receipt-error", "Nhập ít nhất một tên vật tư; số lượng và đơn giá nếu nhập phải hợp lệ.");
     return;
   }
   const receipt = {
     id: id(),
-    date: $("#receipt-date").value,
+    date: $("#receipt-date").value || new Date().toISOString().slice(0, 10),
     supplier: $("#receipt-supplier").value.trim(),
     note: $("#receipt-note").value.trim(),
     lines,
@@ -762,10 +961,11 @@ function showView(view) {
     if (current) button.setAttribute("aria-current", "page");
     else button.removeAttribute("aria-current");
   });
-  $("#breadcrumb-title").textContent = { overview: "Tổng quan", revenue: "Chi tiết doanh thu", products: "Sản phẩm", orders: "Đơn hàng", receiving: "Nhập vật tư", expenses: "Chi phí vận hành", customers: "Khách hàng" }[view];
+  $("#breadcrumb-title").textContent = { overview: "Tổng quan", revenue: "Chi tiết doanh thu", products: "Sản phẩm", "fish-intakes": "Nhập cá", orders: "Đơn hàng", receiving: "Nhập vật tư", expenses: "Chi phí vận hành", customers: "Khách hàng" }[view];
   if (view === "overview") renderOverview();
   if (view === "revenue") renderRevenue();
   if (view === "products") renderProducts();
+  if (view === "fish-intakes") renderFishIntakes();
   if (view === "orders") renderOrders();
   if (view === "receiving") renderReceipts();
   if (view === "expenses") renderExpenses();
@@ -789,16 +989,16 @@ function openProductDialog(productId = "") {
   form.reset();
   clearDialogError("product-error");
   const product = data.products.find((item) => item.id === productId);
-  populateProductUnits(product?.unit || "cái");
+  populateProductUnits(product?.unit || "");
   form.elements.id.value = product?.id || "";
   form.elements.name.value = product?.name || "";
   form.elements.sku.value = product?.sku || "";
-  form.elements.unit.value = product?.unit || "cái";
+  form.elements.unit.value = product?.unit || "";
   form.elements.costPrice.value = product?.costPrice ?? "";
   formatPriceInput(form.elements.costPrice);
   form.elements.description.value = product?.description || "";
   $("#size-price-list").replaceChildren();
-  (Array.isArray(product?.sizes) ? product.sizes : []).forEach((size) => addSizePriceRow({
+  sortSizes(Array.isArray(product?.sizes) ? product.sizes : []).forEach((size) => addSizePriceRow({
     ...size,
     costPrice: size.costPrice ?? product.costPrice ?? "",
   }));
@@ -903,7 +1103,6 @@ function addSizePriceRow(size = {}) {
   const priceLabel = document.createElement("label");
   const priceInput = document.createElement("input");
   priceInput.className = "size-price";
-  priceInput.required = true;
   priceInput.placeholder = "0";
   priceInput.value = size.price ?? "";
   addPriceInput(priceInput);
@@ -914,7 +1113,6 @@ function addSizePriceRow(size = {}) {
   const costLabel = document.createElement("label");
   const costInput = document.createElement("input");
   costInput.className = "size-cost";
-  costInput.required = true;
   costInput.placeholder = "Giá mua";
   costInput.value = size.costPrice ?? "";
   addPriceInput(costInput);
@@ -946,6 +1144,12 @@ async function submitProduct(event) {
   const values = new FormData(form);
   const productId = values.get("id");
   const previous = data.products.find((item) => item.id === productId);
+  const name = String(values.get("name")).trim();
+  if (!name) {
+    showDialogError("product-error", "Nhập tên sản phẩm để lưu vào danh mục.");
+    $("#product-name").focus();
+    return;
+  }
   const sku = String(values.get("sku")).trim();
   const duplicateSku = sku && data.products.some((product) => product.sku.toLowerCase() === sku.toLowerCase() && product.id !== productId);
   if (duplicateSku) {
@@ -957,13 +1161,17 @@ async function submitProduct(event) {
     rawPrice: $(".size-price", row).value,
     rawCost: $(".size-cost", row).value,
   }));
-  if (sizeRows.some((size) => !size.label && (size.rawPrice !== "" || size.rawCost !== "") || size.label && (size.rawPrice === "" || size.rawCost === ""))) {
-    showDialogError("product-error", "Hoàn tất tên size, giá bán và giá mua cho từng dòng, hoặc xóa dòng chưa dùng.");
+  if (sizeRows.some((size) => !size.label && (size.rawPrice !== "" || size.rawCost !== ""))) {
+    showDialogError("product-error", "Nhập tên size nếu khai báo giá, hoặc xóa dòng chưa dùng.");
     return;
   }
-  const sizes = sizeRows.filter((size) => size.label && size.rawPrice !== "" && size.rawCost !== "").map((size) => ({ label: size.label, price: parsePrice(size.rawPrice), costPrice: parsePrice(size.rawCost) }));
-  if (sizes.some((size) => !Number.isFinite(size.price) || size.price < 0 || !Number.isFinite(size.costPrice) || size.costPrice < 0)) {
-    showDialogError("product-error", "Giá bán và giá mua theo size phải là số hợp lệ, từ 0 trở lên.");
+  const sizes = sortSizes(sizeRows.filter((size) => size.label).map((size) => ({
+    label: size.label,
+    price: size.rawPrice === "" ? null : parsePrice(size.rawPrice),
+    costPrice: size.rawCost === "" ? null : parsePrice(size.rawCost),
+  })));
+  if (sizes.some((size) => size.price !== null && (!Number.isFinite(size.price) || size.price < 0) || size.costPrice !== null && (!Number.isFinite(size.costPrice) || size.costPrice < 0))) {
+    showDialogError("product-error", "Giá bán và giá mua theo size nếu nhập phải là số hợp lệ, từ 0 trở lên.");
     return;
   }
   if (new Set(sizes.map((size) => size.label.toLocaleLowerCase())).size !== sizes.length) {
@@ -974,10 +1182,6 @@ async function submitProduct(event) {
   const costPrice = rawCostPrice === "" ? null : parsePrice(rawCostPrice);
   if (costPrice !== null && (!Number.isFinite(costPrice) || costPrice < 0)) {
     showDialogError("product-error", "Giá mua mặc định phải là số hợp lệ, từ 0 trở lên.");
-    return;
-  }
-  if (!sizes.length && costPrice === null) {
-    showDialogError("product-error", "Nhập giá mua mặc định cho sản phẩm không chia size.");
     return;
   }
   let imageId = previous?.imageId || "";
@@ -993,7 +1197,7 @@ async function submitProduct(event) {
   const knownUnit = data.units.some((item) => item.toLocaleLowerCase() === unit.toLocaleLowerCase());
   const product = {
     id: productId || id(),
-    name: String(values.get("name")).trim(),
+    name,
     sku,
     unit,
     costPrice,
@@ -1007,7 +1211,7 @@ async function submitProduct(event) {
   data = {
     ...data,
     products: productId ? data.products.map((item) => item.id === productId ? product : item) : [product, ...data.products],
-    units: knownUnit ? data.units : [...data.units, unit],
+    units: knownUnit || !unit ? data.units : [...data.units, unit],
   };
   if (!await persist()) {
     data = oldData;
@@ -1022,8 +1226,11 @@ async function submitProduct(event) {
       toast("Đã cập nhật sản phẩm nhưng không xóa được ảnh cũ trên cloud.", true);
     }
   }
+  const createdForFishIntake = creatingProductForFishIntake && !productId;
+  creatingProductForFishIntake = false;
   closeDialog($("#product-dialog"));
   renderCurrentView();
+  if (createdForFishIntake) renderFishIntakeProducts(product.id);
   toast(productId ? "Đã cập nhật sản phẩm." : "Đã thêm sản phẩm vào danh mục.");
 }
 async function deleteProduct(productId) {
@@ -1064,12 +1271,18 @@ async function submitCustomer(event) {
   const form = event.currentTarget;
   const values = new FormData(form);
   const customerId = values.get("id");
+  const name = String(values.get("name")).trim();
   const phone = String(values.get("phone")).trim();
-  if (phone.replace(/\D/g, "").length < 8) {
+  if (!name) {
+    showDialogError("customer-error", "Nhập họ tên khách hàng để lưu vào danh bạ.");
+    $("#customer-name").focus();
+    return;
+  }
+  if (phone && phone.replace(/\D/g, "").length < 8) {
     showDialogError("customer-error", "Vui lòng nhập số điện thoại hợp lệ (ít nhất 8 chữ số).");
     return;
   }
-  const duplicate = data.customers.find((customer) => normalizePhone(customer.phone) === normalizePhone(phone) && customer.id !== customerId);
+  const duplicate = phone && data.customers.find((customer) => normalizePhone(customer.phone) === normalizePhone(phone) && customer.id !== customerId);
   if (duplicate) {
     showDialogError("customer-error", `Số điện thoại này đã thuộc về ${duplicate.name}.`);
     return;
@@ -1085,7 +1298,7 @@ async function submitCustomer(event) {
     }
   }
   const previous = data.customers.find((customer) => customer.id === customerId);
-  const customer = { id: customerId || id(), name: String(values.get("name")).trim(), phone, social, createdAt: previous?.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString() };
+  const customer = { id: customerId || id(), name, phone, social, createdAt: previous?.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString() };
   const oldData = data;
   data = { ...data, customers: customerId ? data.customers.map((item) => item.id === customerId ? customer : item) : [customer, ...data.customers] };
   if (!await persist()) { data = oldData; return; }
@@ -1121,9 +1334,7 @@ function openOrderDialog() {
   clearDialogError("order-error");
   $("#order-note").value = "";
   $("#order-customer-name").readOnly = false;
-  $("#order-customer-name").required = true;
-  $("#order-name-required").hidden = false;
-  $("#order-customer-match").textContent = "Nếu số điện thoại chưa có trong danh bạ, hãy nhập tên để tạo hồ sơ mới.";
+  $("#order-customer-match").textContent = "Thông tin khách hàng không bắt buộc. Có thể lưu đơn không gắn hồ sơ.";
   $("#order-customer-match").className = "order-customer-match";
   $("#order-lines").replaceChildren();
   addOrderLine();
@@ -1132,14 +1343,19 @@ function openOrderDialog() {
 function updateOrderCustomerMatch() {
   const phone = $("#order-customer-phone").value.trim();
   const nameInput = $("#order-customer-name");
-  const nameRequired = $("#order-name-required");
   const status = $("#order-customer-match");
-  if (phone.replace(/\D/g, "").length < 8) {
+  const digits = phone.replace(/\D/g, "").length;
+  if (phone && digits < 8) {
     if (nameInput.readOnly) nameInput.value = "";
     nameInput.readOnly = false;
-    nameInput.required = true;
-    nameRequired.hidden = false;
     status.textContent = phone ? "Nhập số điện thoại hợp lệ (ít nhất 8 chữ số)." : "Nếu số điện thoại chưa có trong danh bạ, hãy nhập tên để tạo hồ sơ mới.";
+    status.className = "order-customer-match";
+    return;
+  }
+  if (!phone) {
+    if (nameInput.readOnly) nameInput.value = "";
+    nameInput.readOnly = false;
+    status.textContent = "Thông tin khách hàng không bắt buộc. Có thể lưu đơn không gắn hồ sơ.";
     status.className = "order-customer-match";
     return;
   }
@@ -1147,16 +1363,12 @@ function updateOrderCustomerMatch() {
   if (customer) {
     nameInput.value = customer.name;
     nameInput.readOnly = true;
-    nameInput.required = false;
-    nameRequired.hidden = true;
     status.textContent = `Đã tìm thấy khách hàng: ${customer.name}. Đơn sẽ được lưu vào hồ sơ này.`;
     status.className = "order-customer-match is-matched";
   } else {
     if (nameInput.readOnly) nameInput.value = "";
     nameInput.readOnly = false;
-    nameInput.required = true;
-    nameRequired.hidden = false;
-    status.textContent = "Số điện thoại chưa có trong danh bạ. Nhập họ tên để tạo hồ sơ cùng lúc lưu đơn.";
+    status.textContent = "Số điện thoại chưa có trong danh bạ. Nhập họ tên nếu muốn lưu khách hàng mới.";
     status.className = "order-customer-match is-new";
   }
 }
@@ -1186,7 +1398,6 @@ function addOrderLine() {
   qty.setAttribute("aria-label", "Số lượng sản phẩm");
   const priceInput = document.createElement("input");
   priceInput.className = "line-unit-price";
-  priceInput.required = true;
   priceInput.placeholder = "Giá bán";
   priceInput.setAttribute("aria-label", "Đơn giá bán cho mặt hàng này");
   addPriceInput(priceInput);
@@ -1213,11 +1424,10 @@ function addOrderLine() {
 function configureOrderLine(row) {
   const product = data.products.find((item) => item.id === $(".line-product", row).value);
   const sizeSelect = $(".line-size", row);
-  const sizes = Array.isArray(product?.sizes) ? product.sizes : [];
+  const sizes = sortSizes(Array.isArray(product?.sizes) ? product.sizes : []);
   row.classList.toggle("has-sizes", sizes.length > 0);
   sizeSelect.replaceChildren();
   sizeSelect.hidden = !sizes.length;
-  sizeSelect.required = sizes.length > 0;
   if (sizes.length) {
     const placeholder = document.createElement("option");
     placeholder.value = "";
@@ -1226,7 +1436,7 @@ function configureOrderLine(row) {
     sizes.forEach((size) => {
       const option = document.createElement("option");
       option.value = size.label;
-      option.textContent = `${size.label} · ${money(size.price)}`;
+      option.textContent = `${size.label} · ${size.price == null ? "chưa có giá" : money(size.price)}`;
       option.dataset.price = String(size.price);
       option.dataset.costPrice = String(typeof size.costPrice === "number" ? size.costPrice : typeof product.costPrice === "number" ? product.costPrice : "");
       sizeSelect.append(option);
@@ -1276,13 +1486,18 @@ function updateOrderFishRewardSummary() {
   const summary = $("#order-reward-summary");
   const body = $("#order-reward-lines");
   const phone = $("#order-customer-phone").value.trim();
-  if (phone.replace(/\D/g, "").length < 8) {
+  const customerName = $("#order-customer-name").value.trim();
+  if (phone && phone.replace(/\D/g, "").length < 8) {
     summary.hidden = true;
     body.replaceChildren();
     return;
   }
 
-  const customer = data.customers.find((item) => normalizePhone(item.phone) === normalizePhone(phone));
+  const phoneCustomer = phone ? data.customers.find((item) => normalizePhone(item.phone) === normalizePhone(phone)) : undefined;
+  const nameMatches = !phone && customerName
+    ? data.customers.filter((item) => item.name.toLocaleLowerCase() === customerName.toLocaleLowerCase())
+    : [];
+  const customer = phoneCustomer || (nameMatches.length === 1 ? nameMatches[0] : undefined);
   let runningFishCount = customer ? fishBought(customer.id) : 0;
   const existingRewards = customer ? data.fishRewards.filter((reward) => reward.customerId === customer.id) : [];
   const giftByRow = new Map();
@@ -1329,15 +1544,14 @@ async function createOrder(event) {
   event.preventDefault();
   const customerPhone = $("#order-customer-phone").value.trim();
   const customerName = $("#order-customer-name").value.trim();
-  if (customerPhone.replace(/\D/g, "").length < 8) {
+  if (customerPhone && customerPhone.replace(/\D/g, "").length < 8) {
     showDialogError("order-error", "Vui lòng nhập số điện thoại hợp lệ (ít nhất 8 chữ số).");
     return;
   }
-  let customer = data.customers.find((item) => normalizePhone(item.phone) === normalizePhone(customerPhone));
-  if (!customer && !customerName) {
-    showDialogError("order-error", "Nhập họ tên khách hàng mới để lưu vào danh bạ.");
-    $("#order-customer-name").focus();
-    return;
+  let customer = customerPhone ? data.customers.find((item) => normalizePhone(item.phone) === normalizePhone(customerPhone)) : undefined;
+  if (!customer && !customerPhone && customerName) {
+    const matchingCustomers = data.customers.filter((item) => item.name.toLocaleLowerCase() === customerName.toLocaleLowerCase());
+    if (matchingCustomers.length === 1) customer = matchingCustomers[0];
   }
   const lines = $$(".order-line", $("#order-lines")).map((row) => {
     const productId = $(".line-product", row).value;
@@ -1345,40 +1559,36 @@ async function createOrder(event) {
     const size = $(".line-size", row).selectedOptions[0];
     const rawCostPrice = size?.value ? size.dataset.costPrice : product?.costPrice;
     const costPrice = rawCostPrice === "" || rawCostPrice == null ? null : Number(rawCostPrice);
-    return product ? { productId, name: product.name, sku: product.sku, unit: product.unit || "cái", size: size?.value || "", quantity: Number($(".line-quantity", row).value), price: parsePrice($(".line-unit-price", row).value), costPrice: Number.isFinite(costPrice) ? costPrice : null } : null;
+    const quantityValue = $(".line-quantity", row).value.trim();
+    const priceValue = $(".line-unit-price", row).value.trim();
+    return product ? { productId, name: product.name, sku: product.sku, unit: product.unit || "cái", size: size?.value || "", quantity: quantityValue ? Number(quantityValue) : 1, price: priceValue ? parsePrice(priceValue) : 0, costPrice: Number.isFinite(costPrice) ? costPrice : null } : null;
   }).filter(Boolean);
   if (!lines.length) { showDialogError("order-error", "Thêm ít nhất một mặt hàng vào đơn."); return; }
-  const missingSize = $$(".order-line", $("#order-lines")).some((row) => {
-    const product = data.products.find((item) => item.id === $(".line-product", row).value);
-    return Array.isArray(product?.sizes) && product.sizes.length > 0 && !$(".line-size", row).value;
-  });
-  if (missingSize) {
-    showDialogError("order-error", "Chọn size cho từng mặt hàng có bảng giá theo size.");
-    return;
-  }
   if (lines.some((line) => !Number.isFinite(line.price) || line.price < 0 || !Number.isInteger(line.quantity) || line.quantity < 1)) {
-    showDialogError("order-error", "Nhập số lượng và giá bán hợp lệ cho từng mặt hàng.");
+    showDialogError("order-error", "Số lượng phải là số nguyên lớn hơn 0; giá bán nếu nhập phải từ 0 trở lên.");
     return;
   }
   const now = new Date().toISOString();
-  const isNewCustomer = !customer;
+  const isNewCustomer = !customer && Boolean(customerName);
   if (isNewCustomer) {
     customer = { id: id(), name: customerName, phone: customerPhone, social: "", createdAt: now, updatedAt: now };
   }
   const serial = (Math.max(0, ...data.orders.map((order) => Number(order.number.replace(/\D/g, "")) || 0)) + 1).toString().padStart(4, "0");
-  const order = { id: id(), number: `KM-${serial}`, customerId: customer.id, lines, note: $("#order-note").value.trim(), status: "delivered", createdAt: now, updatedAt: now };
+  const order = { id: id(), number: `KM-${serial}`, customerId: customer?.id || "", customerName: customer?.name || customerName, customerPhone: customer?.phone || customerPhone, lines, note: $("#order-note").value.trim(), status: "delivered", createdAt: now, updatedAt: now };
   const previousData = data;
   data = {
     ...data,
     customers: isNewCustomer ? [customer, ...data.customers] : data.customers,
     orders: [order, ...data.orders],
   };
-  const rewardResult = reconcileFishRewards(customer.id, order.id);
+  const rewardResult = customer
+    ? reconcileFishRewards(customer.id, order.id)
+    : { rewards: data.fishRewards, newlyPending: 0, fishCount: 0 };
   data = { ...data, fishRewards: rewardResult.rewards };
   if (!await persist()) { data = previousData; return; }
   closeDialog($("#order-dialog"));
   renderCurrentView();
-  const baseMessage = isNewCustomer ? `Đã tạo đơn #${order.number} và thêm khách hàng ${customer.name} vào danh bạ.` : `Đã tạo đơn #${order.number} cho ${customer.name}.`;
+  const baseMessage = isNewCustomer ? `Đã tạo đơn #${order.number} và thêm khách hàng ${customer.name} vào danh bạ.` : customer ? `Đã tạo đơn #${order.number} cho ${customer.name}.` : `Đã tạo đơn #${order.number}.`;
   toast(rewardResult.newlyPending ? `${baseMessage} Khách đã mua ${rewardResult.fishCount} con cá: nhớ tặng ${rewardResult.newlyPending} con.` : baseMessage);
 }
 async function deleteOrder(orderId) {
@@ -1386,7 +1596,9 @@ async function deleteOrder(orderId) {
   if (!order || !window.confirm(`Xóa đơn #${order.number}?`)) return;
   const previousData = data;
   data = { ...data, orders: data.orders.filter((item) => item.id !== orderId) };
-  const rewardResult = reconcileFishRewards(order.customerId);
+  const rewardResult = order.customerId
+    ? reconcileFishRewards(order.customerId)
+    : { rewards: data.fishRewards, newlyPending: 0, fishCount: 0 };
   data = { ...data, fishRewards: rewardResult.rewards };
   if (!await persist()) { data = previousData; return; }
   renderCurrentView();
@@ -1400,6 +1612,7 @@ function renderCurrentView() {
   if (activeView === "overview") renderOverview();
   if (activeView === "revenue") renderRevenue($("#revenue-period")?.value || "month");
   if (activeView === "products") renderProducts($("#view-search")?.value || "");
+  if (activeView === "fish-intakes") renderFishIntakes($("#view-search")?.value || "");
   if (activeView === "orders") renderOrders($("#view-search")?.value || "");
   if (activeView === "receiving") renderReceipts($("#view-search")?.value || "");
   if (activeView === "expenses") renderExpenses($("#view-search")?.value || "");
@@ -1449,6 +1662,7 @@ function bindEvents() {
   $("#overview-new-order").addEventListener("click", openOrderDialog);
   $("#metric-revenue").addEventListener("click", () => showView("revenue"));
   $("#product-form").addEventListener("submit", submitProduct);
+  $("#product-dialog").addEventListener("close", () => { creatingProductForFishIntake = false; });
   $("#add-size-price").addEventListener("click", () => addSizePriceRow());
   $("#choose-product-image").addEventListener("click", () => $("#product-image-input").click());
   $("#product-image-input").addEventListener("change", (event) => {
@@ -1476,6 +1690,10 @@ function bindEvents() {
   });
   $("#customer-form").addEventListener("submit", submitCustomer);
   $("#order-form").addEventListener("submit", createOrder);
+  $("#show-reward-history").addEventListener("click", () => {
+    renderRewardHistory();
+    openDialog($("#reward-history-dialog"));
+  });
   $(".order-payment-qr-open").addEventListener("click", () => openDialog($("#qr-lightbox")));
   $("#qr-lightbox").addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
@@ -1487,8 +1705,16 @@ function bindEvents() {
     updateOrderCustomerMatch();
     updateOrderFishRewardSummary();
   });
+  $("#order-customer-name").addEventListener("input", updateOrderFishRewardSummary);
   $("#receipt-form").addEventListener("submit", createReceipt);
   $("#expense-form").addEventListener("submit", createExpense);
+  $("#fish-intake-form").addEventListener("submit", createFishIntake);
+  $("#fish-intake-product").addEventListener("change", () => renderFishIntakeProducts($("#fish-intake-product").value));
+  $("#fish-intake-size").addEventListener("change", updateFishIntakeCost);
+  $("#fish-intake-create-product").addEventListener("click", () => {
+    creatingProductForFishIntake = true;
+    openProductDialog();
+  });
   $("#add-receipt-line").addEventListener("click", addReceiptLine);
   $("#receipt-lines").addEventListener("input", updateReceiptTotal);
   $("#add-order-line").addEventListener("click", addOrderLine);
@@ -1541,12 +1767,35 @@ function hasLocalData(store) {
 
 async function migrateLocalData() {
   data = structuredClone(localData);
+  const missingImages = [];
   for (const product of data.products) {
     if (!product.imageId) continue;
     const image = await getLocalProductImage(product.imageId);
-    if (!image) throw new Error(`Không tìm thấy ảnh cục bộ của sản phẩm “${product.name}”. Hãy nhập file sao lưu JSON có hình ảnh.`);
+    if (!image) {
+      missingImages.push(product.name);
+      product.imageId = "";
+      continue;
+    }
     await storeProductImage(image, product.imageId);
   }
+  return missingImages;
+}
+
+async function initializeCloudData() {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    if (await persist({ quiet: true })) return false;
+    const latest = await apiJson("/api/store");
+    cloudRevision = latest.revision;
+    if (latest.data) {
+      data = normalizeData(latest.data);
+      try { localStorage.setItem(KEY, JSON.stringify(data)); } catch (error) {
+        console.error("Could not cache cloud data locally.", error);
+      }
+      toast("Dữ liệu cloud vừa được khởi tạo ở phiên khác; đã tải bản mới nhất. Hãy kiểm tra dữ liệu trước khi tiếp tục.");
+      return true;
+    }
+  }
+  throw new Error("Chưa khởi tạo được dữ liệu cloud sau khi đồng bộ revision. Hãy tải lại trang; dữ liệu cục bộ chưa bị xóa.");
 }
 
 async function startCloudApp() {
@@ -1562,12 +1811,16 @@ async function startCloudApp() {
       }
     } else {
       if (hasLocalData(localData)) {
-        await migrateLocalData();
-        if (!await persist()) throw new Error("Không thể nhập dữ liệu hiện có vào cloud. Dữ liệu trên thiết bị cũ vẫn được giữ nguyên.");
-        toast("Đã nhập dữ liệu cửa hàng lên cloud thành công.");
+        const missingImages = await migrateLocalData();
+        const adoptedCloudData = await initializeCloudData();
+        if (!adoptedCloudData) {
+          toast(missingImages.length
+            ? `Đã nhập dữ liệu; bỏ qua ảnh cũ của ${missingImages.length} sản phẩm. Mở mục Sản phẩm để tải ảnh mới.`
+            : "Đã nhập dữ liệu cửa hàng lên cloud thành công.");
+        }
       } else {
         data = structuredClone(emptyData);
-        if (!await persist()) throw new Error("Không thể khởi tạo dữ liệu cửa hàng.");
+        await initializeCloudData();
       }
     }
 
@@ -1662,6 +1915,8 @@ async function init() {
   $("#today-date").textContent = today.toLocaleDateString("vi-VN", { day: "numeric", month: "long", year: "numeric" }).toUpperCase();
   addPriceInput($("#product-cost-price"));
   addPriceInput($("#expense-amount"));
+  addPriceInput($("#fish-intake-unit-cost"));
+  addPriceInput($("#fish-intake-other-cost"));
   $("#product-unit").addEventListener("change", handleProductUnitChange);
   $("#add-product-unit").addEventListener("click", addProductUnit);
   $("#cancel-product-unit").addEventListener("click", cancelProductUnit);
