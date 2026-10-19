@@ -1301,7 +1301,7 @@ function renderCustomerPhoneOptions(query = "") {
   data.customers.forEach((customer) => {
     const phone = String(customer.phone || "").trim();
     const normalizedPhone = phone.replace(/\D/g, "");
-    if (normalizedPhone.startsWith(queryDigits) && !customersByPhone.has(normalizedPhone)) {
+    if (normalizedPhone.includes(queryDigits) && !customersByPhone.has(normalizedPhone)) {
       customersByPhone.set(normalizedPhone, { phone, name: customer.name });
     }
   });
