@@ -112,10 +112,10 @@
     <dialog class="app-dialog" id="order-dialog" aria-labelledby="order-dialog-title">
       <form id="order-form" autocomplete="off">
         <div class="dialog-heading"><div><span class="dialog-eyebrow">BÁN HÀNG</span><h2 id="order-dialog-title">Tạo đơn hàng</h2></div><button type="button" class="icon-button" data-close aria-label="Đóng"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m18 6-12 12M6 6l12 12"/></svg></button></div>
-        <p class="dialog-description">Nhập số điện thoại để gắn đơn với khách đã có hoặc tạo hồ sơ mới cùng lúc lưu đơn.</p>
+        <p class="dialog-description">Nhập số điện thoại hoặc họ tên để tìm khách cũ; chọn tên trong danh sách để gắn đơn và tính cá tặng vào đúng hồ sơ. Có thể tạo hồ sơ mới cùng lúc lưu đơn.</p>
         <div class="field-grid order-customer-fields">
-          <div><label for="order-customer-phone">Số điện thoại</label><input id="order-customer-phone" name="customerPhone" type="tel" inputmode="tel" autocomplete="off" maxlength="20" placeholder="09xx xxx xxx"></div>
-          <div><label for="order-customer-name">Họ và tên</label><input id="order-customer-name" name="customerName" autocomplete="off" maxlength="100" placeholder="Tên khách hàng"></div>
+          <div><label for="order-customer-phone">Số điện thoại</label><input id="order-customer-phone" name="customerPhone" type="tel" inputmode="tel" list="customer-phone-options" autocomplete="off" maxlength="20" placeholder="09xx xxx xxx"></div>
+          <div class="order-customer-name-field"><label for="order-customer-name">Họ và tên</label><input id="order-customer-name" name="customerName" autocomplete="off" maxlength="100" placeholder="Tên khách hàng" role="combobox" aria-autocomplete="list" aria-controls="order-customer-name-suggestions" aria-expanded="false"><div class="order-customer-name-suggestions" id="order-customer-name-suggestions" role="listbox" aria-label="Khách hàng trùng tên" hidden></div></div>
         </div>
         <p class="order-customer-match" id="order-customer-match" role="status" aria-live="polite"></p>
         <div class="order-items-heading"><strong>Sản phẩm trong đơn</strong><button type="button" id="add-order-line" class="link-button">+ Thêm mặt hàng</button></div>
@@ -130,7 +130,9 @@
             </table>
           </div>
         </section>
-        <div class="order-total"><span>Tổng đơn hàng<small id="order-quantity-total"></small></span><strong id="order-total">0 ₫</strong></div>
+        <div class="order-discount-field"><label for="order-discount">Giảm giá đơn hàng (₫)</label><input id="order-discount" name="discount" inputmode="numeric" autocomplete="off" placeholder="0"><small>Để trống nếu không giảm giá.</small></div>
+        <div class="order-total"><span>Tạm tính<small id="order-quantity-total"></small></span><strong id="order-subtotal">0 ₫</strong></div>
+        <div class="order-total order-grand-total"><span>Khách cần thanh toán</span><strong id="order-total">0 ₫</strong></div>
         <label for="order-note">Ghi chú đơn hàng</label><textarea id="order-note" name="note" rows="2" maxlength="300" placeholder="Ghi chú giao hàng, yêu cầu của khách..."></textarea>
         <section class="order-payment-qr" aria-labelledby="order-payment-qr-title">
           <h3 id="order-payment-qr-title">Thanh toán bằng mã QR</h3>
@@ -200,12 +202,13 @@
         <div class="dialog-heading"><div><span class="dialog-eyebrow">DANH BẠ CỬA HÀNG</span><h2 id="customer-dialog-title">Thêm khách hàng</h2></div><button type="button" class="icon-button" data-close aria-label="Đóng"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m18 6-12 12M6 6l12 12"/></svg></button></div>
         <input type="hidden" name="id">
         <label for="customer-name">Họ và tên</label><input id="customer-name" name="name" maxlength="100" autocomplete="off" placeholder="Nhập tên khách hàng">
-        <label for="customer-phone">Số điện thoại</label><input id="customer-phone" name="phone" type="tel" maxlength="20" autocomplete="off" placeholder="09xx xxx xxx">
+        <label for="customer-phone">Số điện thoại</label><input id="customer-phone" name="phone" type="tel" list="customer-phone-options" maxlength="20" autocomplete="off" placeholder="09xx xxx xxx">
         <label for="customer-social">Link mạng xã hội</label><input id="customer-social" name="social" type="url" placeholder="https://facebook.com/...">
         <div class="dialog-error" id="customer-error" role="alert" hidden></div>
         <div class="dialog-actions"><button type="button" class="button button-secondary" data-close>Hủy</button><button type="submit" class="button button-primary">Lưu khách hàng</button></div>
       </form>
     </dialog>
+    <datalist id="customer-phone-options"></datalist>
 
     <dialog class="app-dialog info-dialog" id="data-dialog" aria-labelledby="data-dialog-title">
       <div class="dialog-heading"><div><span class="dialog-eyebrow">QUYỀN RIÊNG TƯ</span><h2 id="data-dialog-title">Dữ liệu được lưu ở đâu?</h2></div><button type="button" class="icon-button" data-close aria-label="Đóng"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m18 6-12 12M6 6l12 12"/></svg></button></div>

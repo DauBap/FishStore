@@ -305,6 +305,14 @@ td { height: 51px; padding: 7px 13px; border-top: 1px solid #edf0ed; color: #596
 .order-customer-fields > div { display: grid; min-width: 0; align-content: start; }
 .order-customer-fields input { margin-bottom: 7px; }
 .order-customer-fields input[readonly] { color: #58665d; background: #f3f6f3; }
+.order-customer-name-field { position: relative; }
+.order-customer-name-suggestions { position: absolute; z-index: 4; top: calc(100% - 7px); right: 0; left: 0; max-height: 190px; overflow-y: auto; border: 1px solid #dfe5e1; border-radius: 6px; background: #fff; box-shadow: 0 8px 20px rgba(27,43,35,.14); }
+.order-customer-name-suggestions[hidden] { display: none; }
+.order-customer-name-suggestion { display: grid; width: 100%; min-height: 44px; gap: 2px; padding: 7px 10px; border: 0; border-bottom: 1px solid #eef1ee; color: #364239; background: #fff; text-align: left; cursor: pointer; }
+.order-customer-name-suggestion:last-child { border-bottom: 0; }
+.order-customer-name-suggestion:hover, .order-customer-name-suggestion:focus-visible, .order-customer-name-suggestion[aria-selected="true"] { background: #f1f7f3; }
+.order-customer-name-suggestion strong { font-size: 11px; }
+.order-customer-name-suggestion span { color: var(--muted); font-size: 9px; }
 .order-customer-match { min-height: 16px; margin: -2px 0 14px; color: var(--muted); font-size: 9px; line-height: 1.5; }
 .order-customer-match.is-matched { color: #176544; }
 .order-customer-match.is-new { color: #805809; }
@@ -340,6 +348,11 @@ td { height: 51px; padding: 7px 13px; border-top: 1px solid #edf0ed; color: #596
 .order-total > span { display: grid; gap: 4px; }
 .order-total small { color: var(--muted); font-size: 9px; font-weight: 400; line-height: 1.4; }
 .order-total strong { color: #263d32; font: 700 15px "Manrope",sans-serif; }
+.order-discount-field { display: grid; grid-template-columns: minmax(0,1fr) minmax(100px,.8fr); align-items: center; gap: 4px 10px; margin-top: 12px; }
+.order-discount-field label { color: #455249; font-size: 10px; font-weight: 700; }
+.order-discount-field input { min-width: 0; min-height: 38px; margin: 0; padding: 8px 10px; border: 1px solid #dfe5e1; border-radius: 6px; color: #364239; background: #fff; font-size: 11px; }
+.order-discount-field small { grid-column: 1 / -1; color: var(--muted); font-size: 9px; }
+.order-grand-total { margin-top: 0; border-top: 0; color: #263d32; font-weight: 700; }
 .order-payment-qr { display: grid; justify-items: center; gap: 7px; margin: 2px 0 13px; padding: 12px; border: 1px solid #e5ebe6; border-radius: 8px; background: #fafcfb; text-align: center; }
 .order-payment-qr h3 { margin: 0; color: #455249; font-size: 10px; }
 .order-payment-qr img { display: block; width: min(190px,100%); height: auto; border-radius: 4px; }

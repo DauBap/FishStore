@@ -20,6 +20,8 @@ let selectedProductImage = null;
 let clearProductImage = false;
 let productImagePreviewUrl = null;
 let creatingProductForFishIntake = false;
+let selectedOrderCustomerId = "";
+let activeOrderCustomerSuggestion = -1;
 const renderedImageUrls = new Set();
 
 function loadData() {
@@ -282,7 +284,25 @@ function customerFor(order) {
     ? { name: order.customerName || "", phone: order.customerPhone || "", social: "" }
     : undefined);
 }
-function orderTotal(order) { return order.lines.reduce((total, line) => total + line.quantity * line.price, 0); }
+function orderGrossTotal(order) { return order.lines.reduce((total, line) => total + line.quantity * line.price, 0); }
+function orderDiscount(order) {
+  const discount = Number(order.discount);
+  return Number.isFinite(discount) ? Math.min(orderGrossTotal(order), Math.max(0, discount)) : 0;
+}
+function orderLineNetRevenues(order) {
+  const grossTotal = orderGrossTotal(order);
+  const discount = orderDiscount(order);
+  let allocatedDiscount = 0;
+  return order.lines.map((line, index) => {
+    const gross = line.quantity * line.price;
+    const lineDiscount = index === order.lines.length - 1
+      ? discount - allocatedDiscount
+      : grossTotal > 0 ? Math.min(discount - allocatedDiscount, Math.round(discount * gross / grossTotal)) : 0;
+    allocatedDiscount += lineDiscount;
+    return gross - lineDiscount;
+  });
+}
+function orderTotal(order) { return orderGrossTotal(order) - orderDiscount(order); }
 function lineCostInfo(line) {
   if (typeof line.costPrice === "number" && Number.isFinite(line.costPrice)) {
     return { cost: line.quantity * line.costPrice, estimated: false, missing: false };
@@ -564,15 +584,18 @@ function renderRevenue(period = "month") {
   const estimatedOrders = orders.filter((order) => orderProfitInfo(order).estimated).length;
   const missingCosts = orders.reduce((sum, order) => sum + orderProfitInfo(order).missing, 0);
   const products = new Map();
-  orders.forEach((order) => order.lines.forEach((line) => {
-    const key = `${line.productId || line.name}\\u0000${line.size || ""}`;
-    const current = products.get(key) || { name: line.name, size: line.size || "", unit: line.unit || "", quantity: 0, revenue: 0, cost: 0 };
-    const lineCost = lineCostInfo(line);
-    current.quantity += line.quantity;
-    current.revenue += line.quantity * line.price;
-    current.cost += lineCost.cost;
-    products.set(key, current);
-  }));
+  orders.forEach((order) => {
+    const lineRevenues = orderLineNetRevenues(order);
+    order.lines.forEach((line, index) => {
+      const key = `${line.productId || line.name}\\u0000${line.size || ""}`;
+      const current = products.get(key) || { name: line.name, size: line.size || "", unit: line.unit || "", quantity: 0, revenue: 0, cost: 0 };
+      const lineCost = lineCostInfo(line);
+      current.quantity += line.quantity;
+      current.revenue += lineRevenues[index];
+      current.cost += lineCost.cost;
+      products.set(key, current);
+    });
+  });
   const productRows = [...products.values()].sort((a, b) => b.revenue - a.revenue);
   const periodLabel = period === "month" ? new Date().toLocaleDateString("vi-VN", { month: "long", year: "numeric" }) : "Toàn bộ thời gian";
   panel.innerHTML = `<div class="revenue-heading">
@@ -584,7 +607,7 @@ function renderRevenue(period = "month") {
     <article class="revenue-summary-card"><span>Giá vốn</span><strong>${money(cost)}</strong><small>Dựa trên giá mua / đơn vị của từng size</small></article>
     <article class="revenue-summary-card ${profit < 0 ? "is-loss" : "is-profit"}"><span>${profit < 0 ? "Lỗ gộp ước tính" : "Lãi gộp ước tính"}</span><strong>${money(profit)}</strong><small>${revenue > 0 ? `Biên lãi gộp ${number((profit / revenue) * 100)}%` : "Chưa có doanh thu trong khoảng này"}</small></article>
   </div>
-  <div class="profit-notice" role="note"><strong>Cách tính:</strong> Lãi gộp = doanh thu − giá vốn của mặt hàng đã bán. Chưa trừ chi phí vận hành; phiếu nhập vật tư hiện là nhật ký riêng và không được trừ lần nữa.${estimatedOrders ? ` ${number(estimatedOrders)} đơn cũ đang ước tính giá vốn theo giá mua hiện tại của sản phẩm.` : ""}${missingCosts ? ` Chưa có giá vốn cho ${number(missingCosts)} dòng hàng; lãi thực tế có thể thấp hơn.` : ""}</div>
+  <div class="profit-notice" role="note"><strong>Cách tính:</strong> Lãi gộp = doanh thu sau giảm giá − giá vốn của mặt hàng đã bán. Chưa trừ chi phí vận hành; phiếu nhập vật tư hiện là nhật ký riêng và không được trừ lần nữa.${estimatedOrders ? ` ${number(estimatedOrders)} đơn cũ đang ước tính giá vốn theo giá mua hiện tại của sản phẩm.` : ""}${missingCosts ? ` Chưa có giá vốn cho ${number(missingCosts)} dòng hàng; lãi thực tế có thể thấp hơn.` : ""}</div>
   <section class="panel revenue-table-panel"><div class="panel-heading"><div><h2>Hiệu quả theo sản phẩm và size</h2><p>Số lượng bán, doanh thu, giá vốn và lãi gộp</p></div></div>
     ${productRows.length ? `<div class="table-wrap"><table><thead><tr><th>SẢN PHẨM / SIZE</th><th>SỐ LƯỢNG</th><th>DOANH THU</th><th>GIÁ VỐN</th><th>LÃI GỘP</th></tr></thead><tbody>${productRows.map((item) => `<tr><td><strong>${escapeText(item.name)}</strong>${item.size ? `<small class="revenue-size">${escapeText(item.size)}</small>` : ""}</td><td>${number(item.quantity)} ${escapeText(item.unit)}</td><td>${money(item.revenue)}</td><td>${money(item.cost)}</td><td class="amount-cell">${money(item.revenue - item.cost)}</td></tr>`).join("")}</tbody></table></div>` : '<div class="empty-inline"><strong>Chưa có doanh thu trong khoảng này</strong><span>Các đơn đã hủy không được tính vào báo cáo.</span></div>'}
   </section>
@@ -1257,6 +1280,7 @@ function openCustomerDialog(customerId = "") {
   const form = $("#customer-form");
   form.reset();
   clearDialogError("customer-error");
+  renderCustomerPhoneOptions();
   const customer = data.customers.find((item) => item.id === customerId);
   form.elements.id.value = customer?.id || "";
   form.elements.name.value = customer?.name || "";
@@ -1266,6 +1290,21 @@ function openCustomerDialog(customerId = "") {
   openDialog($("#customer-dialog"));
 }
 function normalizePhone(phone) { return phone.replace(/[^\d+]/g, ""); }
+function renderCustomerPhoneOptions() {
+  const options = $("#customer-phone-options");
+  const customersByPhone = new Map();
+  data.customers.forEach((customer) => {
+    const phone = String(customer.phone || "").trim();
+    const normalizedPhone = normalizePhone(phone);
+    if (normalizedPhone && !customersByPhone.has(normalizedPhone)) customersByPhone.set(normalizedPhone, { phone, name: customer.name });
+  });
+  options.replaceChildren(...[...customersByPhone.values()].map(({ phone, name }) => {
+    const option = document.createElement("option");
+    option.value = phone;
+    option.label = name;
+    return option;
+  }));
+}
 async function submitCustomer(event) {
   event.preventDefault();
   const form = event.currentTarget;
@@ -1330,8 +1369,14 @@ function openOrderDialog() {
     showView("products");
     return;
   }
+  renderCustomerPhoneOptions();
   $("#order-form").reset();
   clearDialogError("order-error");
+  selectedOrderCustomerId = "";
+  activeOrderCustomerSuggestion = -1;
+  $("#order-customer-name-suggestions").replaceChildren();
+  $("#order-customer-name-suggestions").hidden = true;
+  $("#order-customer-name").setAttribute("aria-expanded", "false");
   $("#order-note").value = "";
   $("#order-customer-name").readOnly = false;
   $("#order-customer-match").textContent = "Thông tin khách hàng không bắt buộc. Có thể lưu đơn không gắn hồ sơ.";
@@ -1340,37 +1385,93 @@ function openOrderDialog() {
   addOrderLine();
   openDialog($("#order-dialog"));
 }
+function renderOrderCustomerSuggestions(query) {
+  const input = $("#order-customer-name");
+  const list = $("#order-customer-name-suggestions");
+  const normalizedQuery = query.trim().toLocaleLowerCase("vi");
+  const matches = normalizedQuery
+    ? data.customers.filter((customer) => customer.name.toLocaleLowerCase("vi").includes(normalizedQuery)).slice(0, 8)
+    : [];
+  list.replaceChildren(...matches.map((customer, index) => {
+    const option = document.createElement("button");
+    option.type = "button";
+    option.className = "order-customer-name-suggestion";
+    option.id = `order-customer-name-option-${index}`;
+    option.setAttribute("role", "option");
+    option.setAttribute("aria-selected", String(index === activeOrderCustomerSuggestion));
+    const name = document.createElement("strong");
+    name.textContent = customer.name;
+    const detail = document.createElement("span");
+    detail.textContent = customer.phone || "Chưa có số điện thoại";
+    option.append(name, detail);
+    option.addEventListener("click", () => selectOrderCustomer(customer));
+    return option;
+  }));
+  const showSuggestions = matches.length > 0 && !$("#order-customer-phone").value.trim();
+  list.hidden = !showSuggestions;
+  input.setAttribute("aria-expanded", String(showSuggestions));
+  if (showSuggestions && activeOrderCustomerSuggestion >= 0) {
+    input.setAttribute("aria-activedescendant", `order-customer-name-option-${activeOrderCustomerSuggestion}`);
+  } else {
+    input.removeAttribute("aria-activedescendant");
+  }
+}
+function selectOrderCustomer(customer) {
+  selectedOrderCustomerId = customer.id;
+  activeOrderCustomerSuggestion = -1;
+  $("#order-customer-name").value = customer.name;
+  renderOrderCustomerSuggestions("");
+  const status = $("#order-customer-match");
+  status.textContent = `Đã chọn hồ sơ ${customer.name}. Đơn và cá tặng sẽ gắn vào khách hàng này.`;
+  status.className = "order-customer-match is-matched";
+  updateOrderFishRewardSummary();
+}
 function updateOrderCustomerMatch() {
   const phone = $("#order-customer-phone").value.trim();
   const nameInput = $("#order-customer-name");
   const status = $("#order-customer-match");
   const digits = phone.replace(/\D/g, "").length;
+  const selectedCustomer = data.customers.find((item) => item.id === selectedOrderCustomerId);
+  if (!selectedCustomer) selectedOrderCustomerId = "";
+  if (selectedOrderCustomerId && phone && normalizePhone(selectedCustomer.phone || "") !== normalizePhone(phone)) {
+    selectedOrderCustomerId = "";
+  }
   if (phone && digits < 8) {
     if (nameInput.readOnly) nameInput.value = "";
     nameInput.readOnly = false;
-    status.textContent = phone ? "Nhập số điện thoại hợp lệ (ít nhất 8 chữ số)." : "Nếu số điện thoại chưa có trong danh bạ, hãy nhập tên để tạo hồ sơ mới.";
+    selectedOrderCustomerId = "";
+    renderOrderCustomerSuggestions("");
+    status.textContent = "Nhập số điện thoại hợp lệ (ít nhất 8 chữ số).";
     status.className = "order-customer-match";
     return;
   }
-  if (!phone) {
-    if (nameInput.readOnly) nameInput.value = "";
-    nameInput.readOnly = false;
-    status.textContent = "Thông tin khách hàng không bắt buộc. Có thể lưu đơn không gắn hồ sơ.";
-    status.className = "order-customer-match";
+  if (phone) {
+    const customer = data.customers.find((item) => normalizePhone(item.phone) === normalizePhone(phone));
+    if (customer) {
+      selectedOrderCustomerId = customer.id;
+      nameInput.value = customer.name;
+      nameInput.readOnly = true;
+      renderOrderCustomerSuggestions("");
+      status.textContent = `Đã tìm thấy khách hàng: ${customer.name}. Đơn sẽ được lưu vào hồ sơ này.`;
+      status.className = "order-customer-match is-matched";
+    } else {
+      if (nameInput.readOnly) nameInput.value = "";
+      nameInput.readOnly = false;
+      renderOrderCustomerSuggestions("");
+      status.textContent = "Số điện thoại chưa có trong danh bạ. Nhập họ tên nếu muốn lưu khách hàng mới.";
+      status.className = "order-customer-match is-new";
+    }
     return;
   }
-  const customer = data.customers.find((item) => normalizePhone(item.phone) === normalizePhone(phone));
-  if (customer) {
-    nameInput.value = customer.name;
-    nameInput.readOnly = true;
-    status.textContent = `Đã tìm thấy khách hàng: ${customer.name}. Đơn sẽ được lưu vào hồ sơ này.`;
-    status.className = "order-customer-match is-matched";
-  } else {
-    if (nameInput.readOnly) nameInput.value = "";
-    nameInput.readOnly = false;
-    status.textContent = "Số điện thoại chưa có trong danh bạ. Nhập họ tên nếu muốn lưu khách hàng mới.";
-    status.className = "order-customer-match is-new";
-  }
+  nameInput.readOnly = false;
+  renderOrderCustomerSuggestions(nameInput.value);
+  const customer = data.customers.find((item) => item.id === selectedOrderCustomerId);
+  status.textContent = customer
+    ? `Đã chọn hồ sơ ${customer.name}. Đơn và cá tặng sẽ gắn vào khách hàng này.`
+    : nameInput.value.trim()
+      ? "Chọn khách hàng trong danh sách để gắn đơn và cá tặng vào hồ sơ cũ."
+      : "Thông tin khách hàng không bắt buộc. Có thể lưu đơn không gắn hồ sơ.";
+  status.className = customer ? "order-customer-match is-matched" : "order-customer-match";
 }
 function addOrderLine() {
   const available = data.products;
@@ -1468,7 +1569,10 @@ function updateOrderTotal() {
     const price = Number.isFinite(parsedPrice) ? parsedPrice : 0;
     return sum + price * Number($(".line-quantity", row).value || 0);
   }, 0);
-  $("#order-total").textContent = money(total);
+  const discount = parsePrice($("#order-discount").value);
+  const appliedDiscount = Number.isFinite(discount) ? Math.min(total, Math.max(0, discount)) : 0;
+  $("#order-subtotal").textContent = money(total);
+  $("#order-total").textContent = money(total - appliedDiscount);
   const quantitiesByUnit = new Map();
   rows.forEach((row) => {
     const product = data.products.find((item) => item.id === $(".line-product", row).value);
@@ -1548,7 +1652,9 @@ async function createOrder(event) {
     showDialogError("order-error", "Vui lòng nhập số điện thoại hợp lệ (ít nhất 8 chữ số).");
     return;
   }
-  let customer = customerPhone ? data.customers.find((item) => normalizePhone(item.phone) === normalizePhone(customerPhone)) : undefined;
+  let customer = data.customers.find((item) => item.id === selectedOrderCustomerId);
+  if (customer && customerPhone && normalizePhone(customer.phone || "") !== normalizePhone(customerPhone)) customer = undefined;
+  if (!customer && customerPhone) customer = data.customers.find((item) => normalizePhone(item.phone) === normalizePhone(customerPhone));
   if (!customer && !customerPhone && customerName) {
     const matchingCustomers = data.customers.filter((item) => item.name.toLocaleLowerCase() === customerName.toLocaleLowerCase());
     if (matchingCustomers.length === 1) customer = matchingCustomers[0];
@@ -1568,13 +1674,21 @@ async function createOrder(event) {
     showDialogError("order-error", "Số lượng phải là số nguyên lớn hơn 0; giá bán nếu nhập phải từ 0 trở lên.");
     return;
   }
+  const discountValue = $("#order-discount").value.trim();
+  const discount = discountValue ? parsePrice(discountValue) : 0;
+  const subtotal = lines.reduce((sum, line) => sum + line.quantity * line.price, 0);
+  if (!Number.isFinite(discount) || discount < 0 || discount > subtotal) {
+    showDialogError("order-error", "Giảm giá phải là số tiền hợp lệ, không lớn hơn tạm tính đơn hàng.");
+    $("#order-discount").focus();
+    return;
+  }
   const now = new Date().toISOString();
   const isNewCustomer = !customer && Boolean(customerName);
   if (isNewCustomer) {
     customer = { id: id(), name: customerName, phone: customerPhone, social: "", createdAt: now, updatedAt: now };
   }
   const serial = (Math.max(0, ...data.orders.map((order) => Number(order.number.replace(/\D/g, "")) || 0)) + 1).toString().padStart(4, "0");
-  const order = { id: id(), number: `KM-${serial}`, customerId: customer?.id || "", customerName: customer?.name || customerName, customerPhone: customer?.phone || customerPhone, lines, note: $("#order-note").value.trim(), status: "delivered", createdAt: now, updatedAt: now };
+  const order = { id: id(), number: `KM-${serial}`, customerId: customer?.id || "", customerName: customer?.name || customerName, customerPhone: customer?.phone || customerPhone, lines, discount, note: $("#order-note").value.trim(), status: "delivered", createdAt: now, updatedAt: now };
   const previousData = data;
   data = {
     ...data,
@@ -1705,7 +1819,37 @@ function bindEvents() {
     updateOrderCustomerMatch();
     updateOrderFishRewardSummary();
   });
-  $("#order-customer-name").addEventListener("input", updateOrderFishRewardSummary);
+  $("#order-customer-name").addEventListener("input", () => {
+    selectedOrderCustomerId = "";
+    activeOrderCustomerSuggestion = -1;
+    updateOrderCustomerMatch();
+    updateOrderFishRewardSummary();
+  });
+  $("#order-customer-name").addEventListener("keydown", (event) => {
+    const list = $("#order-customer-name-suggestions");
+    if (event.key === "Escape" && !list.hidden) {
+      event.preventDefault();
+      activeOrderCustomerSuggestion = -1;
+      renderOrderCustomerSuggestions("");
+      return;
+    }
+    if (list.hidden || !["ArrowDown", "ArrowUp", "Enter"].includes(event.key)) return;
+    const options = $$(".order-customer-name-suggestion", list);
+    if (!options.length) return;
+    if (event.key === "Enter") {
+      if (activeOrderCustomerSuggestion >= 0) {
+        event.preventDefault();
+        options[activeOrderCustomerSuggestion]?.click();
+      }
+      return;
+    }
+    event.preventDefault();
+    const direction = event.key === "ArrowDown" ? 1 : -1;
+    activeOrderCustomerSuggestion = activeOrderCustomerSuggestion < 0
+      ? direction > 0 ? 0 : options.length - 1
+      : (activeOrderCustomerSuggestion + direction + options.length) % options.length;
+    renderOrderCustomerSuggestions($("#order-customer-name").value);
+  });
   $("#receipt-form").addEventListener("submit", createReceipt);
   $("#expense-form").addEventListener("submit", createExpense);
   $("#fish-intake-form").addEventListener("submit", createFishIntake);
@@ -1917,6 +2061,8 @@ async function init() {
   addPriceInput($("#expense-amount"));
   addPriceInput($("#fish-intake-unit-cost"));
   addPriceInput($("#fish-intake-other-cost"));
+  addPriceInput($("#order-discount"));
+  $("#order-discount").addEventListener("input", updateOrderTotal);
   $("#product-unit").addEventListener("change", handleProductUnitChange);
   $("#add-product-unit").addEventListener("click", addProductUnit);
   $("#cancel-product-unit").addEventListener("click", cancelProductUnit);
@@ -1931,7 +2077,6 @@ async function init() {
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) refreshCloudData();
   });
-  showLogin();
   try {
     const response = await fetch("/api/auth/session", { credentials: "same-origin" });
     const result = await response.json().catch(() => ({}));
@@ -1941,6 +2086,7 @@ async function init() {
       await startCloudApp();
     } else {
       setLoginMode(Boolean(result.setupRequired));
+      showLogin();
     }
   } catch (error) {
     console.error("Could not check owner session.", error);
