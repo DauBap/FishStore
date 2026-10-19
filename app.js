@@ -1280,7 +1280,7 @@ function openCustomerDialog(customerId = "") {
   const form = $("#customer-form");
   form.reset();
   clearDialogError("customer-error");
-  renderCustomerPhoneOptions();
+  renderCustomerPhoneOptions("");
   const customer = data.customers.find((item) => item.id === customerId);
   form.elements.id.value = customer?.id || "";
   form.elements.name.value = customer?.name || "";
@@ -1290,15 +1290,22 @@ function openCustomerDialog(customerId = "") {
   openDialog($("#customer-dialog"));
 }
 function normalizePhone(phone) { return phone.replace(/[^\d+]/g, ""); }
-function renderCustomerPhoneOptions() {
+function renderCustomerPhoneOptions(query = "") {
   const options = $("#customer-phone-options");
+  const queryDigits = query.replace(/\D/g, "");
+  if (!queryDigits) {
+    options.replaceChildren();
+    return;
+  }
   const customersByPhone = new Map();
   data.customers.forEach((customer) => {
     const phone = String(customer.phone || "").trim();
-    const normalizedPhone = normalizePhone(phone);
-    if (normalizedPhone && !customersByPhone.has(normalizedPhone)) customersByPhone.set(normalizedPhone, { phone, name: customer.name });
+    const normalizedPhone = phone.replace(/\D/g, "");
+    if (normalizedPhone.startsWith(queryDigits) && !customersByPhone.has(normalizedPhone)) {
+      customersByPhone.set(normalizedPhone, { phone, name: customer.name });
+    }
   });
-  options.replaceChildren(...[...customersByPhone.values()].map(({ phone, name }) => {
+  options.replaceChildren(...[...customersByPhone.values()].slice(0, 8).map(({ phone, name }) => {
     const option = document.createElement("option");
     option.value = phone;
     option.label = name;
@@ -1369,7 +1376,7 @@ function openOrderDialog() {
     showView("products");
     return;
   }
-  renderCustomerPhoneOptions();
+  renderCustomerPhoneOptions("");
   $("#order-form").reset();
   clearDialogError("order-error");
   selectedOrderCustomerId = "";
@@ -1802,6 +1809,9 @@ function bindEvents() {
     if (productImagePreviewUrl) URL.revokeObjectURL(productImagePreviewUrl);
     productImagePreviewUrl = null;
   });
+  $("#customer-phone").addEventListener("input", (event) => {
+    renderCustomerPhoneOptions(event.currentTarget.value);
+  });
   $("#customer-form").addEventListener("submit", submitCustomer);
   $("#order-form").addEventListener("submit", createOrder);
   $("#show-reward-history").addEventListener("click", () => {
@@ -1816,6 +1826,7 @@ function bindEvents() {
     }
   });
   $("#order-customer-phone").addEventListener("input", () => {
+    renderCustomerPhoneOptions($("#order-customer-phone").value);
     updateOrderCustomerMatch();
     updateOrderFishRewardSummary();
   });
